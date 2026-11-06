@@ -17,11 +17,9 @@ from .const import (CONF_ADDRESS, CONF_CHANNEL, CONF_TRANSPORT, CONF_URL, CONF_U
                     friendly_message)
 from .editor_api import find_coordinator
 from .ptouch import TAPE_GEOMETRY, render_text, tape_pins
+from .ptouch.protocol import MODEL_NAMES
 
 _LOGGER = logging.getLogger(__name__)
-
-STASH_KEY = DOMAIN + "_setup_failures"      # entry_id -> (reason, message) for entries that failed to set up
-
 
 def _pretty(name: str) -> str:
     return str(name).replace("_", " ")
@@ -30,7 +28,6 @@ def _pretty(name: str) -> str:
 def printer_rows(hass: HomeAssistant) -> list[dict]:
     """Rows of the `printers` command. The token is never included."""
     rows = []
-    stash = hass.data.get(STASH_KEY, {})
     for entry in hass.config_entries.async_entries(DOMAIN):
         data = entry.data
         row: dict[str, Any] = {
@@ -47,9 +44,9 @@ def printer_rows(hass: HomeAssistant) -> list[dict]:
             row["reason"] = REASON_OK if row["online"] else (coord.last_reason or REASON_ERROR)
             status = coord.data
             row["state"] = "offline" if not row["online"] else getattr(status, "state", "idle")
-            if status is not None:
-                row["model"] = status.model_name
-                row["tape_pins"] = {mm: tape_pins(mm, status.model) for mm in TAPE_GEOMETRY}
+            if (model := coord.model) is not None:   # also known while the printer is offline
+                row["model"] = MODEL_NAMES.get(model)
+                row["tape_pins"] = {mm: tape_pins(mm, model) for mm in TAPE_GEOMETRY}
             if status is not None and getattr(status, "has_tape", False):
                 width = int(status.media_width)
                 row["tape_mm"] = width
@@ -60,9 +57,7 @@ def printer_rows(hass: HomeAssistant) -> list[dict]:
             if not row["online"]:
                 row["message"] = coord.last_message or friendly_message(row["reason"], "")
         else:
-            reason, message = stash.get(entry.entry_id, (REASON_ERROR, ""))
-            row["reason"] = reason
-            row["message"] = message or friendly_message(reason, "The printer could not be reached.")
+            row["message"] = friendly_message(REASON_ERROR, "The printer could not be reached.")
         rows.append(row)
     return rows
 

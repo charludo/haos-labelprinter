@@ -6,6 +6,7 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import PTouchCoordinator
+from .ptouch.protocol import MODEL_NAMES
 
 
 class PTouchEntity(CoordinatorEntity[PTouchCoordinator]):
@@ -14,9 +15,8 @@ class PTouchEntity(CoordinatorEntity[PTouchCoordinator]):
     def __init__(self, coordinator: PTouchCoordinator, key: str) -> None:
         super().__init__(coordinator)
         entry = coordinator.config_entry
-        status = coordinator.data
         self._attr_unique_id = f"{entry.entry_id}_{key}"
         self._attr_translation_key = key
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, entry.entry_id)}, manufacturer="Brother",
-            model=(status and status.model_name) or "PT-P710BT", name="Brother P-touch")
+            model=MODEL_NAMES.get(coordinator.model, "PT-P710BT"), name="Brother P-touch")

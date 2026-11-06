@@ -14,9 +14,9 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from PIL import Image
 
-from .const import (CONF_BATCH_WINDOW, CONF_ORIENTATION, CONF_TRANSPORT, CONF_WAKE_SECONDS,
+from .const import (CONF_BATCH_WINDOW, CONF_MODEL, CONF_ORIENTATION, CONF_TRANSPORT, CONF_WAKE_SECONDS,
                     DEFAULT_BATCH_WINDOW, DEFAULT_ORIENTATION, DEFAULT_WAKE_SECONDS, DOMAIN,
-                    POLL_WAKE_SECONDS, REASON_ERROR, REASON_OK, SCAN_INTERVAL_SECONDS,
+                    OFFLINE_REASONS, POLL_WAKE_SECONDS, REASON_ERROR, REASON_OK, SCAN_INTERVAL_SECONDS,
                     friendly_message)
 from .ptouch import (JobOptions, PrinterError, PrinterStatus, PtouchError, build_jobs,
                      make_transport, mm_to_dots)
@@ -40,19 +40,39 @@ class _Request:
     future: asyncio.Future
 
 
+class _FailureLogger(logging.LoggerAdapter):
+    """Logs failed refreshes as warnings when the printer is merely offline (OFFLINE_REASONS)."""
+
+    def __init__(self, logger: logging.Logger, coordinator: "PTouchCoordinator") -> None:
+        super().__init__(logger, {})
+        self.coordinator = coordinator
+
+    def error(self, msg, *args, **kwargs) -> None:
+        log = self.warning if self.coordinator.last_reason in OFFLINE_REASONS else super().error
+        log(msg, *args, **kwargs)
+
+
 class PTouchCoordinator(DataUpdateCoordinator[PrinterStatus]):
     config_entry: PTouchConfigEntry
 
     def __init__(self, hass: HomeAssistant, entry: PTouchConfigEntry) -> None:
-        super().__init__(hass, _LOGGER, config_entry=entry, name=DOMAIN,
+        self.last_reason: str = REASON_OK        # docs/BLUETOOTH_CONTRACT.md section 1
+        self.last_message: str = ""
+        super().__init__(hass, _FailureLogger(_LOGGER, self), config_entry=entry, name=DOMAIN,
                          update_interval=timedelta(seconds=SCAN_INTERVAL_SECONDS))
         cfg = dict(entry.data)
+        cfg.pop(CONF_MODEL, None)
         self.transport = make_transport(cfg.pop(CONF_TRANSPORT), **cfg)
         self._print_lock = asyncio.Lock()
         self._pending: list[_Request] = []
         self._flush_task: asyncio.Task | None = None
-        self.last_reason: str = REASON_OK        # docs/BLUETOOTH_CONTRACT.md section 1
-        self.last_message: str = ""
+
+    @property
+    def model(self) -> int | None:
+        """Model code of the last status, else the stored one."""
+        if self.data is not None:
+            return self.data.model
+        return self.config_entry.data.get(CONF_MODEL)
 
     # -- reason tracking ------------------------------------------------------
     @property
@@ -85,7 +105,14 @@ class PTouchCoordinator(DataUpdateCoordinator[PrinterStatus]):
         except PtouchError as err:
             raise UpdateFailed(self._record_failure(err)) from err
         self._record_ok()
+        self._remember_model(status)
         return status
+
+    def _remember_model(self, status: PrinterStatus) -> None:
+        """Store the model in the entry (which reloads it once). Not called mid-print."""
+        entry = self.config_entry
+        if entry.data.get(CONF_MODEL) != status.model:
+            self.hass.config_entries.async_update_entry(entry, data={**entry.data, CONF_MODEL: status.model})
 
     async def async_connect(self) -> dict:
         """Try to reach the printer now (Connect button / bluetooth/connect); never raises for expected failures."""
@@ -102,6 +129,7 @@ class PTouchCoordinator(DataUpdateCoordinator[PrinterStatus]):
                         "seconds": round(time.monotonic() - start, 1), "message": msg}
         self._record_ok()
         self.async_set_updated_data(status)
+        self._remember_model(status)
         return {"ok": True, "reason": REASON_OK, "seconds": round(time.monotonic() - start, 1),
                 "message": "Connected."}
 

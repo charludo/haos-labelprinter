@@ -23,11 +23,11 @@ def status(width=12, media=0x01, err1=0, model=0x00):
 
 class Fake(Transport):
     def __init__(self):
-        self.st, self.jobs, self.fail, self.down = status(), [], None, False
+        self.st, self.jobs, self.fail, self.down, self.reason = status(), [], None, False, "error"
 
     def get_status(self):
         if self.down:
-            raise TransportError("offline")
+            raise TransportError("offline", reason=self.reason)
         return self.st
 
     def print_job(self, data, pages=1):
@@ -140,12 +140,42 @@ async def test_unavailable_when_offline(hass, fake):
     assert hass.states.get("sensor.brother_p_touch_status").state == "unavailable"
 
 
-async def test_setup_retries_when_offline(hass, fake):
-    fake.down = True
+async def test_offline_printer_still_loads(hass, fake, caplog):
+    fake.down, fake.reason = True, "asleep"                 # switched off: expected
     entry = MockConfigEntry(domain=DOMAIN, data={"transport": "usb", "serial": ""}, options={"batch_window": 0})
     entry.add_to_hass(hass)
-    await hass.config_entries.async_setup(entry.entry_id)
-    assert entry.state.name == "SETUP_RETRY"
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    assert entry.state.name == "LOADED"
+    assert hass.states.get("sensor.brother_p_touch_status").state == "unavailable"
+    failed = [r for r in caplog.records if "Error fetching" in r.getMessage()]
+    assert failed and {r.levelname for r in failed} == {"WARNING"}
+    fake.down = False
+    await entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+    assert hass.states.get("sensor.brother_p_touch_status").state == "idle"
+
+
+async def test_unexpected_failure_is_still_an_error(hass, fake, caplog):
+    fake.down, fake.reason = True, "permission"
+    entry = MockConfigEntry(domain=DOMAIN, data={"transport": "usb", "serial": ""}, options={"batch_window": 0})
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    assert entry.state.name == "LOADED"
+    assert {r.levelname for r in caplog.records if "Error fetching" in r.getMessage()} == {"ERROR"}
+
+
+async def test_model_remembered_while_offline(hass, fake):
+    from homeassistant.helpers import device_registry as dr
+    from custom_components.brother_ptouch.ptouch.protocol import MODEL_P300BT
+    fake.st = status(model=MODEL_P300BT)
+    entry = await setup(hass)
+    assert entry.data["model"] == MODEL_P300BT
+    fake.down, fake.reason = True, "asleep"
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.state.name == "LOADED" and entry.runtime_data.data is None
+    device, = dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
+    assert device.model == "PT-P300BT"
 
 
 @pytest.mark.parametrize("choice,form,expected", [
@@ -161,7 +191,7 @@ async def test_config_flow(hass, fake, choice, form, expected):
     r = await hass.config_entries.flow.async_configure(r["flow_id"], {"next_step_id": choice})
     assert r["type"] is FlowResultType.FORM
     r = await hass.config_entries.flow.async_configure(r["flow_id"], form)
-    assert r["type"] is FlowResultType.CREATE_ENTRY and r["data"] == expected
+    assert r["type"] is FlowResultType.CREATE_ENTRY and r["data"] == {**expected, "model": 0}
 
 
 async def test_config_flow_cannot_connect(hass, fake):

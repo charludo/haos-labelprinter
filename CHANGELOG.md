@@ -8,6 +8,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 - **PT-P300BT support.** The printer reports its model in the status, and labels are sized for it: its print head is 64 dots tall, so 12 mm tape gets 64 printable dots instead of 70. It has no cutter, so no cut is requested (on this model that only prints a cut mark). The editor canvas uses the selected printer's dots per tape width.
 
+### Changed
+- **A printer that is off no longer fails the integration's setup.** The entry loads and the device shows as unavailable until the printer answers. A printer that is switched off or held by another device is logged as a warning; other connection problems stay errors. The printer's model is remembered, so model-specific behaviour is there even when it is off at startup.
+
 ### Fixed
 - Bluetooth printers could not be reached when another program on the host had registered the Serial Port profile with BlueZ: BlueZ allows one per UUID, so connecting failed with "Could not talk to the printer". The connection now falls back to a plain RFCOMM socket on the configured channel.
 

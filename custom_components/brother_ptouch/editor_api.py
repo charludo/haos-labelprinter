@@ -202,12 +202,12 @@ def find_coordinator(hass: HomeAssistant, entry_id: str | None) -> Any:
     return entries[0].runtime_data
 
 
-def _loaded_status(hass: HomeAssistant, entry_id: str | None) -> Any:
-    """Last status of the printer *entry_id* (or of the only printer), else None."""
+def _loaded_coordinator(hass: HomeAssistant, entry_id: str | None) -> Any:
+    """Coordinator of the printer *entry_id* (or of the only printer), else None."""
     entries = _loaded_coordinators(hass)
     if entry_id:
         entries = [e for e in entries if e.entry_id == entry_id]
-    return getattr(entries[0].runtime_data, "data", None) if len(entries) == 1 else None
+    return entries[0].runtime_data if len(entries) == 1 else None
 
 
 def _png_b64(img: Any) -> str:
@@ -328,8 +328,8 @@ async def ws_delete(hass, connection, msg):
     vol.Optional("variables"): dict,
 })
 async def ws_preview(hass, connection, msg):
-    status = _loaded_status(hass, msg.get("entry_id"))
-    model = getattr(status, "model", None)
+    coord = _loaded_coordinator(hass, msg.get("entry_id"))
+    status, model = getattr(coord, "data", None), getattr(coord, "model", None)
     if "tape_mm" in msg:
         tape_mm = _norm_tape(msg["tape_mm"])
     else:
@@ -439,8 +439,8 @@ async def ws_templates_build(hass, connection, msg):
         status = getattr(coord, "data", None)
         tape = status.media_width if status is not None and status.has_tape else 12
     else:
-        status = _loaded_status(hass, msg.get("entry_id"))
-    design = templates.build_template(msg["template_id"], tape, getattr(status, "model", None))
+        coord = _loaded_coordinator(hass, msg.get("entry_id"))
+    design = templates.build_template(msg["template_id"], tape, getattr(coord, "model", None))
     connection.send_result(msg["id"], {"design": design, "tape_mm": tape})
 
 
