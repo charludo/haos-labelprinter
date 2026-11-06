@@ -43,10 +43,34 @@ Docker (from repo root): `docker build -f bridge/Dockerfile -t ptouch-bridge .` 
 A systemd unit is in `bridge/ptouch-bridge.service`. In HA choose *Bridge* and enter `http://<host>:8765`.
 Always set a token; the bridge will print for anyone who can reach it.
 
-## Install
-Copy `custom_components/brother_ptouch` into your HA `config/custom_components/` (or add this repo to
-HACS as a custom repository), restart, then *Settings → Devices & services → Add integration → Brother P-touch*.
-A USB-attached printer is also auto-discovered.
+## Install (HACS)
+1. HACS → ⋮ → **Custom repositories** → add `https://github.com/9112003040/haos-labelprinter`, type **Integration**.
+2. Download **Brother P-touch (PT-P710BT)**, then **restart Home Assistant**.
+3. *Settings → Devices & services → Add integration → Brother P-touch*, and choose USB, Bluetooth or Bridge
+   (see "Three ways to connect"). A USB-attached printer is also auto-discovered.
+4. A **Labels** entry appears in the sidebar (admins only): that is the label editor.
+
+Manual install: copy `custom_components/brother_ptouch` into `config/custom_components/` and restart.
+After an update, hard-refresh the browser or clear the Companion app's cache so it loads the new editor code.
+Tested with Home Assistant 2026.10.4; older versions are untested.
+
+## Label editor (sidebar → Labels)
+Drag-and-drop editor with text (any Google Font), MDI icons, QR codes, barcodes, shapes and images, a gallery of
+35 ready-made templates, `{{ variables }}` and Home Assistant templates such as `{{ states('sensor.x') }}`, and a
+live preview that is exactly what prints. Works on a phone. Fonts and icons are downloaded on first use from
+Google Fonts / jsDelivr and cached on the Home Assistant host (needs internet the first time).
+Print a saved design or a built-in template from an automation:
+
+```yaml
+action: brother_ptouch.print_template
+data:
+  template: freezer-date        # a saved design (id or name) or a built-in template id
+  variables:
+    name: Chili con carne
+    portions: "4"
+    date: "{{ now().strftime('%Y-%m-%d') }}"
+```
+See `docs/` for the templates list, Brother-app comparison and the mobile test checklist.
 
 ## Entities
 `sensor`: status (idle/printing/error), tape width, tape type, tape colour, text colour.

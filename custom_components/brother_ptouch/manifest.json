@@ -1,7 +1,7 @@
 {
   "domain": "brother_ptouch",
   "name": "Brother P-touch (PT-P710BT)",
-  "codeowners": [],
+  "codeowners": ["@9112003040"],
   "config_flow": true,
   "documentation": "https://github.com/9112003040/haos-labelprinter",
   "issue_tracker": "https://github.com/9112003040/haos-labelprinter/issues",
