@@ -1,0 +1,17 @@
+{
+  "domain": "brother_ptouch",
+  "name": "Brother P-touch (PT-P710BT)",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/9112003040/haos-labelprinter",
+  "issue_tracker": "https://github.com/9112003040/haos-labelprinter/issues",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "requirements": ["pyusb>=1.2.1", "segno>=1.6.0"],
+  "usb": [
+    {"vid": "04F9", "pid": "20AF", "description": "*p710bt*"},
+    {"vid": "04F9", "pid": "2061"},
+    {"vid": "04F9", "pid": "2062"}
+  ],
+  "version": "0.1.0"
+}

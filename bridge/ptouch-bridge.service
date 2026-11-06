@@ -1,0 +1,14 @@
+[Unit]
+Description=Brother P-touch HTTP bridge
+After=network-online.target bluetooth.target
+
+[Service]
+# Adjust the path and transport flag (--usb | --bluetooth MAC | --device PATH).
+ExecStart=/usr/bin/python3 /opt/ha-brother-ptouch/bridge/ptouch_bridge.py --usb
+Environment=PTOUCH_BRIDGE_TOKEN=change-me
+Restart=on-failure
+DynamicUser=yes
+SupplementaryGroups=plugdev lp
+
+[Install]
+WantedBy=multi-user.target

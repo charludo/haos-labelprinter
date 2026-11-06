@@ -1,0 +1,121 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "title": "Brother P-touch",
+        "description": "How is the printer reachable from Home Assistant?",
+        "menu_options": {
+          "usb": "USB cable to the Home Assistant host",
+          "bluetooth": "Bluetooth (RFCOMM) from the Home Assistant host",
+          "bridge": "HTTP bridge running next to the printer"
+        }
+      },
+      "usb": {
+        "title": "USB",
+        "description": "Plug the printer into the Home Assistant host and switch it on. Leave the serial empty unless you have several printers.",
+        "data": { "serial": "USB serial number (optional)" }
+      },
+      "discovery_confirm": {
+        "description": "A Brother P-touch printer was found on USB. Set it up?"
+      },
+      "bluetooth": {
+        "title": "Bluetooth",
+        "description": "Pair the printer with the host first (bluetoothctl). Enter its MAC address, or a device path such as /dev/rfcomm0 or /dev/usb/lp0.",
+        "data": { "address": "MAC address or device path", "channel": "RFCOMM channel" }
+      },
+      "bridge": {
+        "title": "HTTP bridge",
+        "description": "URL of ptouch_bridge.py, e.g. http://192.168.1.50:8765",
+        "data": { "url": "Bridge URL", "token": "Bearer token (optional)" }
+      }
+    },
+    "error": {
+      "cannot_connect": "Could not talk to the printer. Check power, cabling/pairing and that no other program is using it.",
+      "unknown": "Unexpected error."
+    },
+    "abort": { "already_configured": "This printer is already configured." }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Printing",
+        "description": "If your first test label comes out mirrored or upside down, pick the setting that fixes it.",
+        "data": { "orientation": "Orientation", "batch_window": "Strip window (seconds)" },
+        "data_description": { "batch_window": "Labels requested within this many seconds of each other print as one continuous strip with a single cut, which saves tape. 0 prints every request on its own." }
+      }
+    }
+  },
+  "selector": {
+    "orientation": {
+      "options": {
+        "normal": "Normal",
+        "flip_pins": "Flip across tape width",
+        "flip_feed": "Flip along tape length",
+        "rotate_180": "Rotate 180°"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": { "idle": "Idle", "printing": "Printing", "error": "Error" }
+      },
+      "tape_width": { "name": "Tape width" },
+      "tape_type": { "name": "Tape type" },
+      "tape_colour": { "name": "Tape colour" },
+      "text_colour": { "name": "Text colour" }
+    },
+    "binary_sensor": {
+      "problem": { "name": "Problem" },
+      "tape_loaded": { "name": "Tape loaded" }
+    }
+  },
+  "services": {
+    "print_text": {
+      "name": "Print text",
+      "description": "Print one or more lines of text. Font size is chosen automatically unless set.",
+      "fields": {
+        "device_id": { "name": "Printer", "description": "Needed only if you have more than one printer." },
+        "text": { "name": "Text", "description": "Text to print; use new lines for multiple lines." },
+        "align": { "name": "Alignment", "description": "Alignment of multi-line text." },
+        "font_size": { "name": "Font size", "description": "Pixels (180 dpi). Leave empty to auto-fit the tape." },
+        "font": { "name": "Font file", "description": "Path to a .ttf file (must be in allowlist_external_dirs)." },
+        "copies": { "name": "Copies", "description": "Number of labels." },
+        "auto_cut": { "name": "Auto cut", "description": "Cut at the end of the job." },
+        "cut_each": { "name": "Cut each label", "description": "With several copies, cut after every label instead of printing one continuous strip. Wastes tape." },
+        "margin_mm": { "name": "Feed margin", "description": "Blank tape fed before/after the label." }
+      }
+    },
+    "print_qr": {
+      "name": "Print QR code",
+      "description": "Print a QR code, optionally followed by text.",
+      "fields": {
+        "device_id": { "name": "Printer", "description": "Needed only if you have more than one printer." },
+        "data": { "name": "QR content", "description": "Text or URL encoded in the QR code." },
+        "text": { "name": "Caption", "description": "Optional text next to the code." },
+        "font_size": { "name": "Font size", "description": "Pixels (180 dpi). Leave empty to auto-fit." },
+        "font": { "name": "Font file", "description": "Path to a .ttf file." },
+        "copies": { "name": "Copies", "description": "Number of labels." },
+        "auto_cut": { "name": "Auto cut", "description": "Cut at the end of the job." },
+        "cut_each": { "name": "Cut each label", "description": "With several copies, cut after every label instead of printing one continuous strip. Wastes tape." },
+        "margin_mm": { "name": "Feed margin", "description": "Blank tape fed before/after the label." }
+      }
+    },
+    "print_image": {
+      "name": "Print image",
+      "description": "Print an image, scaled to the tape height.",
+      "fields": {
+        "device_id": { "name": "Printer", "description": "Needed only if you have more than one printer." },
+        "image_path": { "name": "Image path", "description": "Local file (must be in allowlist_external_dirs)." },
+        "image_url": { "name": "Image URL", "description": "http(s) URL of the image." },
+        "dither": { "name": "Dither", "description": "Use dithering for photos; turn off for logos/line art." },
+        "copies": { "name": "Copies", "description": "Number of labels." },
+        "auto_cut": { "name": "Auto cut", "description": "Cut at the end of the job." },
+        "cut_each": { "name": "Cut each label", "description": "With several copies, cut after every label instead of printing one continuous strip. Wastes tape." },
+        "margin_mm": { "name": "Feed margin", "description": "Blank tape fed before/after the label." }
+      }
+    }
+  }
+}
