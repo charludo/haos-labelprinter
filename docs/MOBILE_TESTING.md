@@ -124,6 +124,16 @@ Use a 360-430 px wide phone in portrait first. Expected results in parentheses.
 29. Leave the panel open for a few minutes while editing. (No lag when dragging; preview requests are debounced to 250 ms/800 ms max on touch devices.)
 30. Swipe down from the top on the empty canvas (Android). (Canvas does not trigger the app's pull-to-refresh. UNVERIFIED: native SwipeRefreshLayout may still fire; if so report it.)
 
+## Template gallery ("From template")
+
+Entry points: the **From template** button under Designs (desktop and the phone Labels tab), the three-dot menu on phones, and the
+"Start from a template" button on an empty canvas. It opens a centred dialog (desktop) or a full-screen sheet (phone) with search,
+category chips and a card grid. Thumbnails are built + rendered by the server at the current tape, lazily as cards scroll into view
+(max 3 requests at once, cached in memory per tape). Templates that do not support the current tape are greyed out and say which tape they need.
+Choosing one opens a new unsaved design (dirty, named after the template); on phones the properties sheet opens scrolled to the Variables.
+If the current design has unsaved changes the in-app "Discard" dialog appears first (Cancel returns to the gallery).
+Phone checks: all targets 44 px, no horizontal scroll, bottom of the grid clears the gesture bar, close button clears the notch, Esc/Enter work with a hardware keyboard.
+
 ## Known limitations / not verified without a device
 
 * WebKit (iOS Safari, WKWebView) and the Android WebView were **not** run. Verified engine: Chromium (Pixel 7 and iPhone-UA

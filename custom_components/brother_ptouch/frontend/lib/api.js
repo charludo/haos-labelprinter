@@ -34,6 +34,14 @@ export class Api {
     await this.call("fonts/ensure", { family, weights: [weight], italic });
     this._ensured.add(key);
   }
+  templatesList() { return this.call("templates/list"); }
+  /** -> {design, tape_mm}; the design is unsaved (id "") with the template's variable defaults. */
+  buildTemplate(templateId, tapeMm, entryId) {
+    const msg = { template_id: templateId };
+    if (tapeMm != null) msg.tape_mm = tapeMm;
+    if (entryId) msg.entry_id = entryId;
+    return this.call("templates/build", msg);
+  }
   searchIcons(query = "", limit = 120) { return this.call("icons/search", { query, limit }).then((r) => r.icons); }
 }
 

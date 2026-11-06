@@ -31,6 +31,11 @@ except Exception as exc:  # noqa: BLE001
     ptdesign = None
     print(f"[mock] ptouch.design unavailable ({exc}); using stub renderer")
 try:
+    from ptouch import templates as pttemplates  # type: ignore
+except Exception as exc:  # noqa: BLE001
+    pttemplates = None
+    print(f"[mock] ptouch.templates unavailable ({exc}); template commands disabled")
+try:
     from ptouch import assets as ptassets  # type: ignore
 except Exception as exc:  # noqa: BLE001
     ptassets = None
@@ -142,6 +147,23 @@ def handle(m):
     if t == "designs/delete":
         DESIGNS.pop(m.get("design_id"), None)
         return {}
+    if t == "templates/list":
+        if not pttemplates:
+            raise WsError("unknown_command", t)
+        return {"templates": pttemplates.list_templates(), "categories": list(pttemplates.CATEGORIES)}
+    if t == "templates/build":
+        if not pttemplates:
+            raise WsError("unknown_command", t)
+        tape = m.get("tape_mm")
+        if tape is None:
+            p = next((p for p in PRINTERS if p["entry_id"] == m.get("entry_id")), PRINTERS[0])
+            tape = p.get("tape_mm") or 12
+        if tape == 3.5:
+            tape = 4
+        try:
+            return {"design": pttemplates.build_template(m["template_id"], tape), "tape_mm": tape}
+        except pttemplates.TemplateError as exc:
+            raise WsError("home_assistant_error", str(exc))
     if t == "preview":
         return do_preview(m)
     if t == "print":

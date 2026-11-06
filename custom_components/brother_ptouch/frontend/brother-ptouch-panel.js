@@ -5,6 +5,7 @@ import * as G from "./lib/geometry.js";
 import { h, icon, iconButton, storage } from "./lib/ui.js";
 import { createFontPicker, createIconPicker, fontInfo, nearestWeight, ALL_WEIGHTS } from "./lib/pickers.js";
 import { CSS } from "./lib/styles.js";
+import { createGallery } from "./lib/gallery.js";
 
 const t = (s) => s;
 const TYPE_ICONS = { text: "mdi:format-text", icon: "mdi:emoticon-outline", qr: "mdi:qrcode", barcode: "mdi:barcode", rect: "mdi:rectangle-outline", image: "mdi:image-outline" };
@@ -121,9 +122,14 @@ class BrotherPtouchPanel extends HTMLElement {
     $.file = h("input", { type: "file", accept: "image/*", class: "sr", tabIndex: -1, "aria-hidden": "true", onChange: () => this._addImage() });
     $.paletteBox = h("div", { class: "section" }, h("h3", {}, t("Add")), $.palette);
     $.designs = h("div", { class: "list" });
+    $.tplBtn = h("button", { class: "btn tpl-btn", type: "button", "aria-haspopup": "dialog", onClick: (e) => this._openGallery(e.currentTarget) }, icon("mdi:shape-plus-outline"), t("From template"));
     $.layers = h("div", { class: "list" });
     $.left = h("aside", { class: "pane left", "aria-label": t("Designs and layers") }, $.paletteBox,
-      h("div", { class: "section" }, h("h3", {}, h("span", { class: "grow" }, t("Designs")), iconButton("mdi:plus", t("New design"), () => this._new())), $.designs),
+      h("div", { class: "section" }, h("h3", {}, h("span", { class: "grow" }, t("Designs"))),
+        h("div", { class: "newrow" },
+          h("button", { class: "btn", type: "button", onClick: () => this._new() }, icon("mdi:plus"), t("New")),
+          $.tplBtn),
+        $.designs),
       h("div", { class: "section" }, h("h3", {}, t("Layers")), $.layers));
 
     // centre
@@ -150,7 +156,8 @@ class BrotherPtouchPanel extends HTMLElement {
     $.ruler = h("div", { class: "ruler" });
     $.img = h("img", { alt: t("Label preview"), draggable: false });
     $.overlay = h("div", { class: "overlay" });
-    $.empty = h("div", { class: "empty-hint" }, t("Add an element to start"));
+    $.empty = h("div", { class: "empty-hint" }, h("span", {}, t("Add an element to start")),
+      h("button", { class: "btn", type: "button", onClick: (e) => this._openGallery(e.currentTarget) }, icon("mdi:shape-plus-outline"), t("Start from a template")));
     $.stage = h("div", { class: "stage", tabIndex: 0, role: "application", "aria-label": t("Label canvas. Arrow keys move the selected element.") }, $.img, $.overlay, $.empty);
     $.scroller = h("div", { class: "scroller" }, h("div", { class: "canvas-wrap" }, $.ruler, $.stage));
     $.center = h("main", { class: "pane center" }, $.ctoolbar, $.msgStrip, $.errStrip, $.warnStrip, $.scroller, $.actionbar);
@@ -179,10 +186,13 @@ class BrotherPtouchPanel extends HTMLElement {
       $.rowTape, $.rowLen, $.rowPrinter, $.rowCopies,
       h("div", { class: "acts" },
         h("button", { class: "btn", type: "button", onClick: () => { this._closeLayer(); this._new(); } }, icon("mdi:file-plus-outline"), t("New design")),
+        h("button", { class: "btn", type: "button", onClick: (e) => { const o = $.more; this._closeLayer(); this._openGallery(o); } }, icon("mdi:shape-plus-outline"), t("From template")),
         h("button", { class: "btn", type: "button", onClick: () => { this._closeLayer(); this._setZoom("fit"); } }, icon("mdi:fit-to-screen-outline"), t("Reset zoom"))));
     $.dlgText = h("p"); $.dlgOk = h("button", { class: "btn primary", type: "button" }); $.dlgCancel = h("button", { class: "btn", type: "button" }, t("Cancel"));
     $.dialog = h("div", { class: "dialog", role: "alertdialog", "aria-modal": "true" }, $.dlgText, h("div", { class: "acts" }, $.dlgCancel, $.dlgOk));
-    $.layer = h("div", { class: "layer", hidden: true, onClick: (e) => { if (e.target === $.layer) this._closeLayer(); } }, $.addSheet, $.menuSheet, $.dialog);
+    this.gallery = createGallery({ api: { templatesList: () => this.api.templatesList(), buildTemplate: (id, tape) => this.api.buildTemplate(id, tape), preview: (d, o) => this.api.preview(d, o) },
+      t, getTape: () => this.tape, onPick: (tpl) => this._newFromTemplate(tpl), onClose: () => this._closeLayer() });
+    $.layer = h("div", { class: "layer", hidden: true, onClick: (e) => { if (e.target === $.layer) this._closeLayer(); } }, $.addSheet, $.menuSheet, this.gallery.el, $.dialog);
 
     $.body = h("div", { class: "body" }, $.left, $.center, $.right);
     $.root = h("div", { class: "root", "data-tab": "edit" }, $.topbar, $.body, $.tabs, $.layer, $.file);
@@ -229,15 +239,23 @@ class BrotherPtouchPanel extends HTMLElement {
   _openLayer(mode) { this.$.layer.dataset.mode = mode; this.$.layer.hidden = false; }
   _closeLayer() {
     if (this._dlgResolve) { const r = this._dlgResolve; this._dlgResolve = null; r(false); }
+    const wasGallery = this.$.layer.dataset.mode === "gallery";
     this.$.layer.hidden = true; this.$.layer.dataset.mode = "";
+    if (wasGallery) this._restoreFocus();
   }
+  _restoreFocus() { const o = this._galleryOpener; this._galleryOpener = null; if (o?.isConnected) { try { o.focus({ preventScroll: true }); } catch { /* ignore */ } } }
   /** In-app confirmation dialog; resolves true/false. */
   _confirm(message, { ok = t("OK"), danger = false } = {}) {
     const $ = this.$;
+    this._confirmFromGallery = this.$.layer.dataset.mode === "gallery" && !this.$.layer.hidden;
     if (this._dlgResolve) { const r = this._dlgResolve; this._dlgResolve = null; r(false); }
     return new Promise((resolve) => {
       $.dlgText.textContent = message; $.dlgOk.textContent = ok; $.dlgOk.classList.toggle("danger", danger);
-      const done = (v) => { this._dlgResolve = null; $.layer.hidden = true; $.layer.dataset.mode = ""; resolve(v); };
+      const done = (v) => {
+        this._dlgResolve = null; $.layer.hidden = true; $.layer.dataset.mode = "";
+        if (!v && this._confirmFromGallery) { this._confirmFromGallery = false; this._showGallery(false); }
+        resolve(v);
+      };
       this._dlgResolve = resolve;
       $.dlgOk.onclick = () => done(true); $.dlgCancel.onclick = () => done(false);
       this._openLayer("confirm"); $.dlgCancel.focus();
@@ -778,6 +796,35 @@ class BrotherPtouchPanel extends HTMLElement {
     this.store.load(emptyDesign()); storage.set("lastDesign", ""); this._renderDesigns();
     this.s.tab = "edit"; this._applyLayout();
   }
+  // ---- template gallery ---------------------------------------------------------
+  _openGallery(opener) {
+    this._galleryOpener = opener || null;
+    this._showGallery(true, true);
+  }
+  _showGallery(focusSearch, reset = false) {
+    this.$.layer.dataset.mode = "gallery"; this.$.layer.hidden = false;
+    this.gallery.open({ focusSearch: focusSearch && !(this._coarse || this._touchSeen), reset });
+  }
+  async _newFromTemplate(tpl) {
+    if (!(await this._confirmDiscard())) return;
+    const tape = this.tape;
+    let design;
+    try { ({ design } = await this.api.buildTemplate(tpl.id, tape, this.s.entryId || undefined)); }
+    catch (e) { this.gallery.showError(`${tpl.name}: ${e.message || e}`); return; }
+    this._galleryOpener = null;
+    this._closeLayer();
+    design.id = ""; design.name = tpl.name || design.name;
+    this.store.load(design, { saved: false });   // unsaved: dirty until the user saves
+    storage.set("lastDesign", ""); this._renderDesigns();
+    this.s.tab = "edit";
+    if (this.s.layout === "narrow") { this.s.sheet = true; this.s.sheetTall = false; }   // the sheet shows the variables to fill in
+    this._applyLayout(); this._afterSheet();
+    if (this.s.layout === "narrow") requestAnimationFrame(() => requestAnimationFrame(() => { this.$.sheetBody.scrollTop = Math.max(0, this.$.vars.offsetTop - 8); }));   // show the variables, keep the label visible
+    const first = this.$.vars.querySelector(".vars-row input:nth-child(2)");
+    if (first && !(this._coarse || this._touchSeen)) { first.focus({ preventScroll: true }); first.select?.(); }
+    this._notify(`${t("Created from template")}: ${tpl.name}`, "info", 2500);
+  }
+
   async _save() {
     await this._guard(t("Save failed"), async () => {
       const saved = await this.api.saveDesign(this.store.design);
