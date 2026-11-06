@@ -7,42 +7,100 @@
         "description": "How is the printer reachable from Home Assistant?",
         "menu_options": {
           "usb": "USB cable to the Home Assistant host",
-          "bluetooth": "Bluetooth (RFCOMM) from the Home Assistant host",
+          "bluetooth": "Bluetooth from the Home Assistant host (scan and pair)",
           "bridge": "HTTP bridge running next to the printer"
         }
       },
       "usb": {
         "title": "USB",
         "description": "Plug the printer into the Home Assistant host and switch it on. Leave the serial empty unless you have several printers.",
-        "data": { "serial": "USB serial number (optional)" }
+        "data": {
+          "serial": "USB serial number (optional)"
+        }
       },
       "discovery_confirm": {
         "description": "A Brother P-touch printer was found on USB. Set it up?"
       },
       "bluetooth": {
         "title": "Bluetooth",
-        "description": "Pair the printer with the host first (bluetoothctl). Enter its MAC address, or a device path such as /dev/rfcomm0 or /dev/usb/lp0.",
-        "data": { "address": "MAC address or device path", "channel": "RFCOMM channel" }
+        "description": "Looking for Bluetooth printers."
       },
       "bridge": {
         "title": "HTTP bridge",
         "description": "URL of ptouch_bridge.py, e.g. http://192.168.1.50:8765",
-        "data": { "url": "Bridge URL", "token": "Bearer token (optional)" }
+        "data": {
+          "url": "Bridge URL",
+          "token": "Bearer token (optional)"
+        }
+      },
+      "bluetooth_scan": {
+        "title": "Searching for printers",
+        "description": "Switch the printer on, disconnect any phone from it and keep it close to the Home Assistant host."
+      },
+      "bluetooth_pick": {
+        "title": "Choose your printer",
+        "description": "Pick the printer from the list. Printers are listed first. If it is not paired yet, Home Assistant pairs it for you (PIN 0000).",
+        "data": {
+          "device": "Printer",
+          "rescan": "Scan again",
+          "manual": "Enter address manually"
+        }
+      },
+      "bluetooth_pair": {
+        "title": "Pairing"
+      },
+      "bluetooth_paired": {
+        "title": "Pairing finished"
+      },
+      "bluetooth_manual": {
+        "title": "Bluetooth address",
+        "description": "{explanation}\n\nPair the printer with the host first (bluetoothctl). Enter its MAC address, or a device path such as /dev/rfcomm0 or /dev/usb/lp0.",
+        "data": {
+          "address": "MAC address or device path",
+          "channel": "RFCOMM channel"
+        }
       }
     },
     "error": {
       "cannot_connect": "Could not talk to the printer. Check power, cabling/pairing and that no other program is using it.",
-      "unknown": "Unexpected error."
+      "unknown": "Unexpected error.",
+      "asleep": "The printer isn't answering. Press its power button to switch it on, make sure no phone is connected to it, then try again.",
+      "busy": "The printer is connected to something else (a phone?). Disconnect it and try again.",
+      "not_paired": "This printer isn't paired with Home Assistant yet.",
+      "bluetooth_off": "Bluetooth is switched off on the Home Assistant host.",
+      "bluetooth_unavailable": "Home Assistant can't use Bluetooth here. Use USB or the network bridge, or enter the address manually.",
+      "pairing_failed": "Pairing failed. Check that the printer is on and try again.",
+      "pairing_timeout": "Pairing took too long. Make sure the printer is on and close by, then try again.",
+      "device_not_found": "The printer was not found. Switch it on and scan again.",
+      "no_devices": "No Bluetooth devices were found. Switch the printer on and scan again, or enter the address manually.",
+      "no_device_selected": "Choose a printer, or tick one of the other options.",
+      "invalid_address": "That is not a valid Bluetooth address (expected AA:BB:CC:DD:EE:FF)."
     },
-    "abort": { "already_configured": "This printer is already configured." }
+    "abort": {
+      "already_configured": "This printer is already configured.",
+      "cannot_connect": "Could not talk to the printer: {message}",
+      "invalid_url": "{message}",
+      "invalid_format": "{message}"
+    },
+    "progress": {
+      "scanning": "Scanning for Bluetooth devices. This takes about 10 seconds.",
+      "pairing": "Pairing with {name}. Keep the printer switched on and close to the host; if it asks for a PIN, it is 0000."
+    }
   },
   "options": {
     "step": {
       "init": {
         "title": "Printing",
         "description": "If your first test label comes out mirrored or upside down, pick the setting that fixes it.",
-        "data": { "orientation": "Orientation", "batch_window": "Strip window (seconds)" },
-        "data_description": { "batch_window": "Labels requested within this many seconds of each other print as one continuous strip with a single cut, which saves tape. 0 prints every request on its own." }
+        "data": {
+          "orientation": "Orientation",
+          "batch_window": "Strip window (seconds)",
+          "wake_seconds": "Bluetooth wake time (seconds)"
+        },
+        "data_description": {
+          "batch_window": "Labels requested within this many seconds of each other print as one continuous strip with a single cut, which saves tape. 0 prints every request on its own.",
+          "wake_seconds": "How long printing and the Connect button keep trying to reach a sleeping Bluetooth printer. 0 tries once."
+        }
       }
     }
   },
@@ -60,16 +118,37 @@
     "sensor": {
       "status": {
         "name": "Status",
-        "state": { "idle": "Idle", "printing": "Printing", "error": "Error" }
+        "state": {
+          "idle": "Idle",
+          "printing": "Printing",
+          "error": "Error"
+        }
       },
-      "tape_width": { "name": "Tape width" },
-      "tape_type": { "name": "Tape type" },
-      "tape_colour": { "name": "Tape colour" },
-      "text_colour": { "name": "Text colour" }
+      "tape_width": {
+        "name": "Tape width"
+      },
+      "tape_type": {
+        "name": "Tape type"
+      },
+      "tape_colour": {
+        "name": "Tape colour"
+      },
+      "text_colour": {
+        "name": "Text colour"
+      }
     },
     "binary_sensor": {
-      "problem": { "name": "Problem" },
-      "tape_loaded": { "name": "Tape loaded" }
+      "problem": {
+        "name": "Problem"
+      },
+      "tape_loaded": {
+        "name": "Tape loaded"
+      }
+    },
+    "button": {
+      "connect_bluetooth": {
+        "name": "Connect Bluetooth"
+      }
     }
   },
   "services": {
@@ -77,57 +156,156 @@
       "name": "Print text",
       "description": "Print one or more lines of text. Font size is chosen automatically unless set.",
       "fields": {
-        "device_id": { "name": "Printer", "description": "Needed only if you have more than one printer." },
-        "text": { "name": "Text", "description": "Text to print; use new lines for multiple lines." },
-        "align": { "name": "Alignment", "description": "Alignment of multi-line text." },
-        "font_size": { "name": "Font size", "description": "Pixels (180 dpi). Leave empty to auto-fit the tape." },
-        "font": { "name": "Font file", "description": "Path to a .ttf file (must be in allowlist_external_dirs)." },
-        "copies": { "name": "Copies", "description": "Number of labels." },
-        "auto_cut": { "name": "Auto cut", "description": "Cut at the end of the job." },
-        "cut_each": { "name": "Cut each label", "description": "With several copies, cut after every label instead of printing one continuous strip. Wastes tape." },
-        "margin_mm": { "name": "Feed margin", "description": "Blank tape fed before/after the label." }
+        "device_id": {
+          "name": "Printer",
+          "description": "Needed only if you have more than one printer."
+        },
+        "text": {
+          "name": "Text",
+          "description": "Text to print; use new lines for multiple lines."
+        },
+        "align": {
+          "name": "Alignment",
+          "description": "Alignment of multi-line text."
+        },
+        "font_size": {
+          "name": "Font size",
+          "description": "Pixels (180 dpi). Leave empty to auto-fit the tape."
+        },
+        "font": {
+          "name": "Font file",
+          "description": "Path to a .ttf file (must be in allowlist_external_dirs)."
+        },
+        "copies": {
+          "name": "Copies",
+          "description": "Number of labels."
+        },
+        "auto_cut": {
+          "name": "Auto cut",
+          "description": "Cut at the end of the job."
+        },
+        "cut_each": {
+          "name": "Cut each label",
+          "description": "With several copies, cut after every label instead of printing one continuous strip. Wastes tape."
+        },
+        "margin_mm": {
+          "name": "Feed margin",
+          "description": "Blank tape fed before/after the label."
+        }
       }
     },
     "print_qr": {
       "name": "Print QR code",
       "description": "Print a QR code, optionally followed by text.",
       "fields": {
-        "device_id": { "name": "Printer", "description": "Needed only if you have more than one printer." },
-        "data": { "name": "QR content", "description": "Text or URL encoded in the QR code." },
-        "text": { "name": "Caption", "description": "Optional text next to the code." },
-        "font_size": { "name": "Font size", "description": "Pixels (180 dpi). Leave empty to auto-fit." },
-        "font": { "name": "Font file", "description": "Path to a .ttf file." },
-        "copies": { "name": "Copies", "description": "Number of labels." },
-        "auto_cut": { "name": "Auto cut", "description": "Cut at the end of the job." },
-        "cut_each": { "name": "Cut each label", "description": "With several copies, cut after every label instead of printing one continuous strip. Wastes tape." },
-        "margin_mm": { "name": "Feed margin", "description": "Blank tape fed before/after the label." }
+        "device_id": {
+          "name": "Printer",
+          "description": "Needed only if you have more than one printer."
+        },
+        "data": {
+          "name": "QR content",
+          "description": "Text or URL encoded in the QR code."
+        },
+        "text": {
+          "name": "Caption",
+          "description": "Optional text next to the code."
+        },
+        "font_size": {
+          "name": "Font size",
+          "description": "Pixels (180 dpi). Leave empty to auto-fit."
+        },
+        "font": {
+          "name": "Font file",
+          "description": "Path to a .ttf file."
+        },
+        "copies": {
+          "name": "Copies",
+          "description": "Number of labels."
+        },
+        "auto_cut": {
+          "name": "Auto cut",
+          "description": "Cut at the end of the job."
+        },
+        "cut_each": {
+          "name": "Cut each label",
+          "description": "With several copies, cut after every label instead of printing one continuous strip. Wastes tape."
+        },
+        "margin_mm": {
+          "name": "Feed margin",
+          "description": "Blank tape fed before/after the label."
+        }
       }
     },
     "print_image": {
       "name": "Print image",
       "description": "Print an image, scaled to the tape height.",
       "fields": {
-        "device_id": { "name": "Printer", "description": "Needed only if you have more than one printer." },
-        "image_path": { "name": "Image path", "description": "Local file (must be in allowlist_external_dirs)." },
-        "image_url": { "name": "Image URL", "description": "http(s) URL of the image." },
-        "dither": { "name": "Dither", "description": "Use dithering for photos; turn off for logos/line art." },
-        "copies": { "name": "Copies", "description": "Number of labels." },
-        "auto_cut": { "name": "Auto cut", "description": "Cut at the end of the job." },
-        "cut_each": { "name": "Cut each label", "description": "With several copies, cut after every label instead of printing one continuous strip. Wastes tape." },
-        "margin_mm": { "name": "Feed margin", "description": "Blank tape fed before/after the label." }
+        "device_id": {
+          "name": "Printer",
+          "description": "Needed only if you have more than one printer."
+        },
+        "image_path": {
+          "name": "Image path",
+          "description": "Local file (must be in allowlist_external_dirs)."
+        },
+        "image_url": {
+          "name": "Image URL",
+          "description": "http(s) URL of the image."
+        },
+        "dither": {
+          "name": "Dither",
+          "description": "Use dithering for photos; turn off for logos/line art."
+        },
+        "copies": {
+          "name": "Copies",
+          "description": "Number of labels."
+        },
+        "auto_cut": {
+          "name": "Auto cut",
+          "description": "Cut at the end of the job."
+        },
+        "cut_each": {
+          "name": "Cut each label",
+          "description": "With several copies, cut after every label instead of printing one continuous strip. Wastes tape."
+        },
+        "margin_mm": {
+          "name": "Feed margin",
+          "description": "Blank tape fed before/after the label."
+        }
       }
     },
     "print_template": {
       "name": "Print label design",
       "description": "Print a label design saved in the Labels editor. Home Assistant templates in the design are rendered first.",
       "fields": {
-        "device_id": { "name": "Printer", "description": "Needed only if you have more than one printer." },
-        "template": { "name": "Design", "description": "ID or name of the saved design." },
-        "variables": { "name": "Variables", "description": "Values for {{ name }} placeholders; they override the design defaults." },
-        "copies": { "name": "Copies", "description": "Number of labels." },
-        "auto_cut": { "name": "Auto cut", "description": "Cut at the end of the job." },
-        "cut_each": { "name": "Cut each label", "description": "With several copies, cut after every label instead of printing one continuous strip. Wastes tape." },
-        "margin_mm": { "name": "Feed margin", "description": "Blank tape fed before/after the label." }
+        "device_id": {
+          "name": "Printer",
+          "description": "Needed only if you have more than one printer."
+        },
+        "template": {
+          "name": "Design",
+          "description": "ID or name of the saved design."
+        },
+        "variables": {
+          "name": "Variables",
+          "description": "Values for {{ name }} placeholders; they override the design defaults."
+        },
+        "copies": {
+          "name": "Copies",
+          "description": "Number of labels."
+        },
+        "auto_cut": {
+          "name": "Auto cut",
+          "description": "Cut at the end of the job."
+        },
+        "cut_each": {
+          "name": "Cut each label",
+          "description": "With several copies, cut after every label instead of printing one continuous strip. Wastes tape."
+        },
+        "margin_mm": {
+          "name": "Feed margin",
+          "description": "Blank tape fed before/after the label."
+        }
       }
     }
   }

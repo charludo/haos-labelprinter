@@ -7,7 +7,15 @@ class PtouchError(Exception):
 
 
 class TransportError(PtouchError):
-    """Could not talk to the printer (not found, permission, timeout...)."""
+    """Could not talk to the printer (not found, permission, timeout...).
+
+    ``reason`` is a short machine-readable code (``asleep``, ``not_paired``,
+    ``busy``, ``bluetooth_off``, ``error``...). ``str(err)`` is the plain message.
+    """
+
+    def __init__(self, *args, reason: str = "error") -> None:
+        super().__init__(*args)
+        self.reason = reason
 
 
 class ProtocolError(PtouchError):

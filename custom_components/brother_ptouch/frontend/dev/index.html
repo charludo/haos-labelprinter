@@ -18,7 +18,9 @@
 </head>
 <body>
 <script>
-  // Query: ?theme=dark  ?narrow=1  ?printers=0
+  // Query: ?theme=dark  ?narrow=1
+  // Mock-backend switches (reset on every load): ?printers=0|1|2  ?pair=ok|fail|timeout  ?connect=ok|asleep|asleep_once|busy
+  //   ?bt=ok|no_dbus|bluetooth_off|no_adapter  ?add=ok|fail  ?wake=<seconds a sleeping printer makes a print wait>  ?pair_secs=<n>
   const q = new URLSearchParams(location.search);
   if (q.get("theme") === "dark") document.documentElement.classList.add("dark");
 
@@ -52,7 +54,16 @@
   };
 </script>
 <script type="module">
-  import "../brother-ptouch-panel.js";
+  {
+    const sw = {};
+    for (const k of ["pair", "connect", "bt", "add"]) if (q.get(k)) sw[k] = q.get(k);
+    if (q.get("wake")) sw.wake_secs = Number(q.get("wake"));
+    if (q.get("pair_secs")) sw.pair_secs = Number(q.get("pair_secs"));
+    const call = (m) => fetch("/api/ws", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(m) });
+    await call({ type: "brother_ptouch/_mock/reset", printers: q.has("printers") ? Number(q.get("printers")) : 2 });
+    if (Object.keys(sw).length) await call({ type: "brother_ptouch/_mock/set", ...sw });
+  }
+  await import("../brother-ptouch-panel.js");
   const el = document.createElement("brother-ptouch-panel");
   el.narrow = q.get("narrow") === "1";
   el.panel = { config: {} };

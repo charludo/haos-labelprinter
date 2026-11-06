@@ -43,6 +43,9 @@ DEFAULT_RFCOMM_CHANNEL = 1
 class Transport:
     """Interface."""
 
+    #: seconds a transport may spend waking / reaching a sleeping printer (None = transport default)
+    wake_timeout: float | None = None
+
     def get_status(self) -> PrinterStatus:  # pragma: no cover - interface
         raise NotImplementedError
 
@@ -251,23 +254,45 @@ class RFCOMMTransport(StreamTransport):
         # The printer keeps the single RFCOMM link busy for a moment after a
         # disconnect (EBUSY / ECONNREFUSED / ECONNRESET), so retry briefly.
         err: OSError | None = None
-        for attempt in range(8):
+        wake = self.wake_timeout
+        deadline = None if wake is None else time.monotonic() + max(0.0, float(wake))
+        attempt = 0
+        while True:
             s = socket.socket(socket.AF_BLUETOOTH, socket.SOCK_STREAM, socket.BTPROTO_RFCOMM)
-            s.settimeout(15)
+            s.settimeout(15 if deadline is None else max(1.0, min(15.0, deadline - time.monotonic())))
             try:
                 s.connect((self._address, self._channel))
             except OSError as e:
                 s.close()
                 err = e
-                if e.errno not in (errno.EBUSY, errno.ECONNREFUSED, errno.ECONNRESET, errno.EAGAIN):
+                if e.errno not in (errno.EBUSY, errno.ECONNREFUSED, errno.ECONNRESET, errno.EAGAIN,
+                                   errno.EHOSTDOWN, errno.ETIMEDOUT, errno.EHOSTUNREACH) \
+                        and not isinstance(e, socket.timeout):
                     break
-                time.sleep(0.75 * (attempt + 1))
+                attempt += 1
+                delay = 0.75 * attempt
+                if deadline is None:
+                    if attempt >= 8:
+                        break
+                elif time.monotonic() + delay >= deadline:
+                    break
+                time.sleep(delay)
                 continue
             self._sock = s
             return
-        raise TransportError(
+        reason = "error"
+        if err is not None:
+            if err.errno in (errno.EHOSTDOWN, errno.ETIMEDOUT, errno.EHOSTUNREACH) or isinstance(err, socket.timeout):
+                reason = "asleep"
+            elif err.errno in (errno.EBUSY, errno.ECONNREFUSED, errno.ECONNRESET, errno.EAGAIN):
+                reason = "busy"
+            elif err.errno in (errno.EPERM, errno.EACCES):
+                reason = "permission"
+        exc = TransportError(
             f"cannot connect to {self._address} ch {self._channel}: {err} "
-            "(paired? powered on? connected to a phone?)") from err
+            "(paired? powered on? connected to a phone?)")
+        exc.reason = reason          # optional attribute, see docs/BLUETOOTH_CONTRACT.md section 1
+        raise exc from err
 
     def _close(self) -> None:
         if self._sock is not None:

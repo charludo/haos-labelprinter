@@ -284,13 +284,8 @@ def _need(designs: dict, design_id: str) -> dict:
 
 @_command({vol.Required("type"): "brother_ptouch/printers"})
 async def ws_printers(hass, connection, msg):
-    printers = []
-    for entry in _loaded_coordinators(hass):
-        coord = entry.runtime_data
-        state = "offline" if not coord.last_update_success else getattr(coord.data, "state", "idle")
-        printers.append({"entry_id": entry.entry_id, "title": entry.title,
-                         "tape_mm": _loaded_tape(entry), "state": state})
-    connection.send_result(msg["id"], {"printers": printers})
+    from .printer_api import printer_rows       # lazy: printer_api imports this module
+    connection.send_result(msg["id"], {"printers": printer_rows(hass)})
 
 
 @_command({vol.Required("type"): "brother_ptouch/designs/list"})
@@ -461,7 +456,8 @@ def _state(hass: HomeAssistant) -> dict:
 async def async_setup_editor(hass: HomeAssistant) -> None:
     state = _state(hass)
     if not state["ws"]:
-        for cmd in COMMANDS:
+        from . import bluetooth_api, printer_api
+        for cmd in (*COMMANDS, *bluetooth_api.COMMANDS, *printer_api.COMMANDS):
             websocket_api.async_register_command(hass, cmd)
         state["ws"] = True
     if state["panel"]:

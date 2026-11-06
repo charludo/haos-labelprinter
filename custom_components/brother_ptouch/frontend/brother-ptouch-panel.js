@@ -6,6 +6,9 @@ import { h, icon, iconButton, storage } from "./lib/ui.js";
 import { createFontPicker, createIconPicker, fontInfo, nearestWeight, ALL_WEIGHTS } from "./lib/pickers.js";
 import { CSS } from "./lib/styles.js";
 import { createGallery } from "./lib/gallery.js";
+import { createPrinterDrawer, createWizard } from "./lib/printer_ui.js";
+import * as PL from "./lib/printer_logic.js";
+import { failureSentence, canRetry, reasonText } from "./lib/reasons.js";
 
 const t = (s) => s;
 const TYPE_ICONS = { text: "mdi:format-text", icon: "mdi:emoticon-outline", qr: "mdi:qrcode", barcode: "mdi:barcode", rect: "mdi:rectangle-outline", image: "mdi:image-outline" };
@@ -21,9 +24,10 @@ class BrotherPtouchPanel extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this.store = new Store();
     this.api = null;
+    this.printFlow = PL.newPrintFlow();
     this.s = {
       tapeSel: storage.get("tape", "auto"), entryId: storage.get("entry", ""), copies: 1,
-      zoom: 3, fit: storage.get("zoomMode", "fit") === "fit", printers: [], designs: [],
+      zoom: 3, fit: storage.get("zoomMode", "fit") === "fit", printers: [], printersLoaded: false, designs: [],
       testValues: {}, preview: null, previewUrl: "", error: "", warnings: [],
       tab: "edit", busy: "", layout: "wide", sheet: false, sheetTall: false,
     };
@@ -70,15 +74,25 @@ class BrotherPtouchPanel extends HTMLElement {
 
   async _init() {
     this._renderAll();
-    try { this.s.printers = await this.api.printers(); } catch (e) { this._notify(e.message || String(e), "err"); }
-    if (!this.s.entryId && this.s.printers.length) this.s.entryId = this.s.printers[0].entry_id;
-    if (!this.s.printers.some((p) => p.entry_id === this.s.entryId)) this.s.entryId = this.s.printers[0]?.entry_id || "";
-    this._renderTop();
+    await this._refreshPrinters(true);
     await this._refreshDesigns();
     const last = storage.get("lastDesign", "");
     if (last && this.s.designs.some((d) => d.id === last)) await this._open(last, true);
     else this.previewer.request();
   }
+
+  /** Re-fetch the printer rows (normalised); keeps the active printer if it still exists. */
+  async _refreshPrinters(initial = false) {
+    try { this.s.printers = (await this.api.printers()).map(PL.normalizePrinter); }
+    catch (e) { if (initial) this._notify(e.message || String(e), "err"); else throw e; }
+    finally { this.s.printersLoaded = true; }
+    const id = PL.pickActive(this.s.printers, this.s.entryId);
+    if (id !== this.s.entryId) { const had = this.s.entryId; this.s.entryId = id; if (had !== id) this.previewer?.request(); }
+    storage.set("entry", this.s.entryId);
+    this._renderTop();
+    if (this.printerDrawer && !this.$.layer.hidden && this.$.layer.dataset.mode === "printers") this.printerDrawer.render();
+  }
+  _selectPrinter(id) { this.s.entryId = id; storage.set("entry", id); this._renderTop(); this.previewer.request(); }
 
   // ---- shell -----------------------------------------------------------
   _buildShell() {
@@ -100,10 +114,16 @@ class BrotherPtouchPanel extends HTMLElement {
     $.lenMm = h("input", { type: "number", min: 5, max: 1000, step: 1, inputmode: "decimal", "aria-label": t("Length in mm"), onInput: () => { const v = parseFloat($.lenMm.value); if (v > 0) this.store.setMeta({ length_mm: v }, "len"); } });
     $.undo = iconButton("mdi:undo", t("Undo (Ctrl+Z)"), () => this.store.undo());
     $.redo = iconButton("mdi:redo", t("Redo (Ctrl+Y)"), () => this.store.redo());
-    $.printer = h("select", { "aria-label": t("Printer"), onChange: () => { this.s.entryId = $.printer.value; storage.set("entry", this.s.entryId); this._renderTop(); this.previewer.request(); } });
+    $.chipDot = h("span", { class: "dot grey", "aria-hidden": "true" });
+    $.chipName = h("span", { class: "chip-name" }); $.chipStatus = h("span", { class: "chip-status" });
+    $.chip = h("button", { class: "printer-chip", type: "button", "aria-haspopup": "dialog", onClick: () => this._openPrinters() }, $.chipDot, $.chipName, $.chipStatus, icon("mdi:chevron-down"));
+    $.pbar = h("div", { class: "pbar" });
     $.copies = h("input", { type: "number", min: 1, max: 20, value: 1, inputmode: "numeric", "aria-label": t("Copies"), title: t("Copies"), onInput: () => { this.s.copies = Math.min(20, Math.max(1, parseInt($.copies.value) || 1)); } });
     $.save = h("button", { class: "btn save", type: "button", "aria-label": t("Save"), onClick: () => this._save() }, icon("mdi:content-save-outline"), h("span", { class: "lbl" }, t("Save")));
     $.print = h("button", { class: "btn primary", type: "button", "aria-label": t("Print"), onClick: () => this._print() }, icon("mdi:printer"), h("span", { class: "lbl" }, t("Print")));
+    $.setup = h("button", { class: "btn primary setup-btn", type: "button", "aria-haspopup": "dialog", hidden: true, onClick: () => this._openWizard(false) },
+      icon("mdi:printer-settings"), h("span", { class: "lbl" }, t("Set up your printer")), h("span", { class: "lbl-s" }, t("Set up printer")));
+    $.printStrip = h("div", { class: "pstrip", hidden: true, "aria-live": "polite" });
     $.more = iconButton("mdi:dots-vertical", t("More options"), () => this._openLayer("menu"), { class: "ibtn more", "aria-haspopup": "dialog" });
     $.copiesWrap = h("div", { class: "tb-group" }, h("label", { class: "small" }, t("Copies")), $.copies);
     $.gTape = h("div", { class: "tb-group" }, $.tape);
@@ -177,13 +197,13 @@ class BrotherPtouchPanel extends HTMLElement {
 
     // modal layer (phones): add palette, overflow menu, confirm dialog
     const mrow = (label, ...kids) => h("div", { class: "mrow" }, h("label", {}, label), h("div", {}, ...kids));
-    $.slotTape = h("div"); $.slotLen = h("div"); $.slotPrinter = h("div"); $.slotCopies = h("div");
+    $.slotTape = h("div"); $.slotLen = h("div"); $.slotCopies = h("div");
     $.rowTape = mrow(t("Tape"), $.slotTape); $.rowLen = mrow(t("Length"), $.slotLen);
-    $.rowPrinter = mrow(t("Printer"), $.slotPrinter); $.rowCopies = mrow(t("Copies"), $.slotCopies);
+    $.rowCopies = mrow(t("Copies"), $.slotCopies);
     $.addSheet = h("div", { class: "msheet add-sheet", role: "dialog", "aria-label": t("Add element") }, h("h3", {}, h("span", { class: "grow" }, t("Add element"))));
     $.menuSheet = h("div", { class: "msheet menu-sheet", role: "dialog", "aria-label": t("Label options") },
       h("h3", {}, h("span", { class: "grow" }, t("Label options")), iconButton("mdi:close", t("Close"), () => this._closeLayer())),
-      $.rowTape, $.rowLen, $.rowPrinter, $.rowCopies,
+      $.rowTape, $.rowLen, $.rowCopies,
       h("div", { class: "acts" },
         h("button", { class: "btn", type: "button", onClick: () => { this._closeLayer(); this._new(); } }, icon("mdi:file-plus-outline"), t("New design")),
         h("button", { class: "btn", type: "button", onClick: (e) => { const o = $.more; this._closeLayer(); this._openGallery(o); } }, icon("mdi:shape-plus-outline"), t("From template")),
@@ -192,10 +212,17 @@ class BrotherPtouchPanel extends HTMLElement {
     $.dialog = h("div", { class: "dialog", role: "alertdialog", "aria-modal": "true" }, $.dlgText, h("div", { class: "acts" }, $.dlgCancel, $.dlgOk));
     this.gallery = createGallery({ api: { templatesList: () => this.api.templatesList(), buildTemplate: (id, tape) => this.api.buildTemplate(id, tape), preview: (d, o) => this.api.preview(d, o) },
       t, getTape: () => this.tape, onPick: (tpl) => this._newFromTemplate(tpl), onClose: () => this._closeLayer() });
-    $.layer = h("div", { class: "layer", hidden: true, onClick: (e) => { if (e.target === $.layer) this._closeLayer(); } }, $.addSheet, $.menuSheet, this.gallery.el, $.dialog);
+    // the api object is created when hass arrives: components call through this proxy
+    const lazy = new Proxy({}, { get: (_, k) => (...a) => this.api[k](...a) });
+    this.printerDrawer = createPrinterDrawer({ api: lazy, t, getPrinters: () => this.s.printers, getActive: () => this.s.entryId,
+      refresh: () => this._refreshPrinters(), onSelect: (id) => this._selectPrinter(id), onAdd: () => this._openWizard(true),
+      onClose: () => this._closeLayer(), confirm: (m, o) => this._confirm(m, o) });
+    this.wizard = createWizard({ api: lazy, t, getPrinters: () => this.s.printers, refresh: () => this._refreshPrinters(),
+      onClose: () => this._closeWizard(), onDone: (id) => this._wizardDone(id) });
+    $.layer = h("div", { class: "layer", hidden: true, onClick: (e) => { if (e.target === $.layer) this._closeLayer(); } }, $.addSheet, $.menuSheet, this.gallery.el, this.printerDrawer.el, this.wizard.el, $.dialog);
 
     $.body = h("div", { class: "body" }, $.left, $.center, $.right);
-    $.root = h("div", { class: "root", "data-tab": "edit" }, $.topbar, $.body, $.tabs, $.layer, $.file);
+    $.root = h("div", { class: "root", "data-tab": "edit" }, $.topbar, $.pbar, $.printStrip, $.body, $.tabs, $.layer, $.file);
     sr.append($.root);
     this._placeNodes(false);
 
@@ -212,14 +239,16 @@ class BrotherPtouchPanel extends HTMLElement {
     this._placed = key;
     const $ = this.$;
     if (narrow) {
-      $.topbar.replaceChildren($.menu, $.name, $.dirty, $.save, $.print, $.more);
+      $.topbar.replaceChildren($.menu, $.name, $.dirty, $.save, $.setup, $.print, $.more);
+      $.pbar.replaceChildren($.chip);
       $.slotTape.replaceChildren($.gTape); $.slotLen.replaceChildren($.gLen);
-      $.slotPrinter.replaceChildren($.printer); $.slotCopies.replaceChildren($.copies);
+      $.slotCopies.replaceChildren($.copies);
       $.ctoolbar.replaceChildren($.zoomOut, $.zoomChip, $.zoomIn, h("span", { class: "spacer" }), $.hist);
       $.actionbar.replaceChildren($.addBtn, $.tools);
       $.addSheet.append($.palette);
     } else {
-      $.topbar.replaceChildren($.menu, $.name, $.dirty, $.gTape, $.gLen, $.spacer, $.hist, $.printer, $.copiesWrap, $.save, $.print);
+      $.topbar.replaceChildren($.menu, $.name, $.dirty, $.gTape, $.gLen, $.spacer, $.hist, $.chip, $.copiesWrap, $.save, $.setup, $.print);
+      $.pbar.replaceChildren();
       $.copiesWrap.append($.copies);
       $.gTape.append($.tape); $.gLen.append($.lenMode, $.lenMm);
       $.ctoolbar.replaceChildren($.zoomOut, $.zoomSel, $.zoomIn, $.sep, $.tools, $.readout);
@@ -240,20 +269,26 @@ class BrotherPtouchPanel extends HTMLElement {
   _closeLayer() {
     if (this._dlgResolve) { const r = this._dlgResolve; this._dlgResolve = null; r(false); }
     const wasGallery = this.$.layer.dataset.mode === "gallery";
+    const wasPrinter = ["printers", "wizard"].includes(this.$.layer.dataset.mode);
+    if (this.$.layer.dataset.mode === "wizard") this.wizard.abort();
+    this.printerDrawer?.close();
     this.$.layer.hidden = true; this.$.layer.dataset.mode = "";
     if (wasGallery) this._restoreFocus();
+    if (wasPrinter) { const o = this._printerOpener; this._printerOpener = null; if (o?.isConnected) { try { o.focus({ preventScroll: true }); } catch { /* ignore */ } } else this.$.chip.focus?.({ preventScroll: true }); }
   }
   _restoreFocus() { const o = this._galleryOpener; this._galleryOpener = null; if (o?.isConnected) { try { o.focus({ preventScroll: true }); } catch { /* ignore */ } } }
   /** In-app confirmation dialog; resolves true/false. */
   _confirm(message, { ok = t("OK"), danger = false } = {}) {
     const $ = this.$;
     this._confirmFromGallery = this.$.layer.dataset.mode === "gallery" && !this.$.layer.hidden;
+    const backToDrawer = this.$.layer.dataset.mode === "printers" && !this.$.layer.hidden;
     if (this._dlgResolve) { const r = this._dlgResolve; this._dlgResolve = null; r(false); }
     return new Promise((resolve) => {
       $.dlgText.textContent = message; $.dlgOk.textContent = ok; $.dlgOk.classList.toggle("danger", danger);
       const done = (v) => {
         this._dlgResolve = null; $.layer.hidden = true; $.layer.dataset.mode = "";
         if (!v && this._confirmFromGallery) { this._confirmFromGallery = false; this._showGallery(false); }
+        if (backToDrawer) { $.layer.dataset.mode = "printers"; $.layer.hidden = false; }
         resolve(v);
       };
       this._dlgResolve = resolve;
@@ -333,10 +368,13 @@ class BrotherPtouchPanel extends HTMLElement {
     const fixed = d.length_mm != null && d.length_mm !== "";
     $.lenMode.value = fixed ? "fixed" : "auto";
     $.lenMm.hidden = !fixed; if (fixed && this.shadowRoot.activeElement !== $.lenMm) $.lenMm.value = d.length_mm;
-    $.printer.hidden = this.s.printers.length < 2; $.rowPrinter.hidden = $.printer.hidden;
-    $.printer.replaceChildren(...this.s.printers.map((x) => h("option", { value: x.entry_id }, `${x.title}${x.state && x.state !== "idle" ? ` (${x.state})` : ""}`)));
-    $.printer.value = this.s.entryId;
-    $.print.disabled = !!this.s.busy || !d.elements.length;
+    const cs = PL.chipState(this.s.printers, this.s.entryId, this.s.printersLoaded);
+    $.chipDot.className = "dot " + cs.dot; $.chipName.textContent = t(cs.name); $.chipStatus.textContent = t(cs.status);
+    $.chip.title = t(cs.title); $.chip.setAttribute("aria-label", `${t("Printer")}: ${cs.name}, ${cs.status}. ${t("Open printer list")}`);
+    const first = this.s.printersLoaded && !this.s.printers.length;   // first run: no printer yet
+    $.setup.hidden = !first; $.print.hidden = first; $.root.classList.toggle("first-run", first);
+    $.print.disabled = !!this.s.busy || !d.elements.length || this.printFlow.phase === "waiting";
+    $.print.classList.toggle("waiting", this.printFlow.phase === "waiting");
     $.save.disabled = !!this.s.busy;
     const sel = this.store.selected;
     for (const b of [$.tRotate, $.tDup, $.tDel, $.tEdit]) b.disabled = !sel;
@@ -852,12 +890,77 @@ class BrotherPtouchPanel extends HTMLElement {
   }
   async _print() {
     const p = this.printer;
+    if (!p) { this._openWizard(false); return; }
+    if (this.printFlow.phase === "waiting") return;
     if (this.s.tapeSel !== "auto" && p?.tape_mm && p.tape_mm !== this.s.tapeSel &&
         !(await this._confirm(`${t("The printer has")} ${G.tapeLabel(p.tape_mm)} ${t("tape loaded, but this design is set to")} ${G.tapeLabel(this.s.tapeSel)}. ${t("Print anyway?")}`, { ok: t("Print") }))) return;
-    await this._guard(t("Print failed"), async () => {
-      await this.api.print({ design: this.store.design, entry_id: this.s.entryId || undefined, variables: this._testVars(), copies: this.s.copies });
-      this._notify(`${t("Sent to printer")}${this.s.copies > 1 ? ` (${this.s.copies}×)` : ""}`, "info");
-    });
+    this._startPrint();
+  }
+  /** Runs one print attempt. The call may block ~20 s while the backend wakes a sleeping printer. */
+  async _startPrint() {
+    const req = { design: this.store.design, entry_id: this.s.entryId || undefined, variables: this._testVars(), copies: this.s.copies };
+    this._lastPrint = req;
+    this.printFlow = PL.startPrint(this.printFlow);
+    const id = this.printFlow.id;
+    this._renderPrintStrip(); this._renderTop();
+    clearInterval(this._pTick); this._pTick = setInterval(() => this._renderPrintStrip(), 1000);
+    let outcome;
+    try { await this.api.print(req); outcome = { ok: true }; }
+    catch (e) { const f = failureSentence(e, t("Printing failed.")); outcome = { ok: false, reason: f.reason, text: f.text }; }
+    const { flow, late } = PL.finishPrint(this.printFlow, id, outcome);
+    this.printFlow = flow;
+    if (flow.phase !== "waiting") clearInterval(this._pTick);
+    if (late?.ok) this._notify(t("The label you stopped waiting for was sent to the printer after all."), "info", 5000);
+    if (flow.phase === "done") { this._notify(`${t("Sent to printer")}${req.copies > 1 ? ` (${req.copies}×)` : ""}`, "info"); this.printFlow = PL.dismissPrint(flow); }
+    this._renderPrintStrip(); this._renderTop();
+    this._refreshPrinters().catch(() => {});
+  }
+  _cancelPrintWait() {
+    this.printFlow = PL.cancelPrint(this.printFlow); clearInterval(this._pTick);
+    this._renderPrintStrip(); this._renderTop();
+  }
+  _renderPrintStrip() {
+    const f = this.printFlow, el = this.$.printStrip;
+    el.hidden = f.phase === "idle";
+    if (f.phase === "idle") { el.replaceChildren(); return; }
+    el.className = "pstrip " + (f.phase === "failed" ? "err" : "wait");
+    el.setAttribute("role", f.phase === "failed" ? "alert" : "status");
+    if (f.phase === "waiting") {
+      el.replaceChildren(h("span", { class: "spin", "aria-hidden": "true" }), h("span", { class: "grow" }, PL.waitingText(f)),
+        h("button", { class: "btn small", type: "button", onClick: () => this._cancelPrintWait() }, t("Cancel")));
+    } else {
+      el.replaceChildren(icon("mdi:alert-circle-outline"), h("span", { class: "grow" }, f.text || t("Printing failed.")),
+        h("button", { class: "btn small primary", type: "button", onClick: () => { this.printFlow = PL.dismissPrint(this.printFlow); this._startPrint(); } }, icon("mdi:refresh"), t("Retry")),
+        h("button", { class: "btn small", type: "button", onClick: () => { this.printFlow = PL.dismissPrint(this.printFlow); this._renderPrintStrip(); this._renderTop(); } }, t("Dismiss")),
+        h("button", { class: "btn small", type: "button", onClick: () => this._openPrinters() }, icon("mdi:printer-settings"), t("Printers")));
+    }
+  }
+
+  // ---- printer drawer and Add-printer wizard ----
+  _openPrinters() {
+    this._printerOpener = this.shadowRoot.activeElement;
+    this.$.layer.dataset.mode = "printers"; this.$.layer.hidden = false;
+    this.printerDrawer.open();
+  }
+  _openWizard(fromDrawer) {
+    this._wizardFromDrawer = !!fromDrawer;
+    this.printerDrawer.close();
+    this.$.layer.dataset.mode = "wizard"; this.$.layer.hidden = false;
+    this.wizard.open();
+  }
+  _closeWizard() {
+    this.wizard.abort();
+    if (this._wizardFromDrawer) { this._openPrinters(); return; }
+    this._closeLayer();
+  }
+  async _wizardDone(id) {
+    this.wizard.abort();
+    await this._refreshPrinters().catch(() => {});
+    if (id) this._selectPrinter(id);
+    this._closeLayer();
+    const p = this.printer;
+    if (p) this._notify(`${p.name} ${t("is ready")}${p.tape ? ` (${PL.tapeWidthText(p.tape.width_mm)})` : ""}.`, "info", 4000);
+    if (this.s.tapeSel === "auto") this.previewer.request();
   }
 
   _add(type, info) {
@@ -892,7 +995,7 @@ class BrotherPtouchPanel extends HTMLElement {
     const tag = path[0]?.tagName;
     const inField = ["INPUT", "TEXTAREA", "SELECT"].includes(tag) && path[0].type !== "checkbox" && path[0].type !== "file";
     const mod = ev.ctrlKey || ev.metaKey, k = ev.key;
-    if (k === "Escape" && !this.$.layer.hidden) { ev.preventDefault(); this._closeLayer(); return; }
+    if (k === "Escape" && !this.$.layer.hidden) { ev.preventDefault(); if (this.$.layer.dataset.mode === "wizard") this._closeWizard(); else this._closeLayer(); return; }
     if (mod && !ev.altKey && k.toLowerCase() === "s") { ev.preventDefault(); this._save(); return; }
     if (inField) return;
     if (mod && k.toLowerCase() === "z") { ev.preventDefault(); ev.shiftKey ? this.store.redo() : this.store.undo(); return; }

@@ -146,3 +146,27 @@ Phone checks: all targets 44 px, no horizontal scroll, bottom of the grid clears
 * Pull-to-refresh and edge swipes handled natively by the Companion app cannot be suppressed from web content with certainty.
 * Real-device performance (preview debounce values, pinch smoothness) is untested.
 * Free rotation, multi-select and on-canvas text editing are not implemented.
+
+## Printer setup (chip, drawer, Add-printer wizard)
+
+Dev harness: start `.venv/bin/python custom_components/brother_ptouch/frontend/dev/mock_backend.py --offline` (binds 127.0.0.1:8765) and open
+`http://127.0.0.1:8765/dev/index.html`. It uses a stateful fake of the printer/Bluetooth commands (nothing touches a radio) and resets on every load.
+Switches via the query string: `printers=0|1|2` (0 = first run), `pair=ok|fail|timeout`, `connect=ok|asleep|asleep_once|busy`, `bt=ok|no_dbus|bluetooth_off|no_adapter`,
+`add=ok|fail`, `wake=<s a sleeping printer makes print/connect wait>`, `pair_secs`. Example first run on a phone: `?printers=0&pair=fail&connect=asleep_once`.
+Against real Home Assistant, only the checks that do not depend on a real printer state (layout, focus, touch) apply; stop the mock server when done.
+
+1. Open with `?printers=0`. (Chip reads "Printer - No printer" with a grey dot; Print is replaced by a blue "Set up your printer" button; the editor still works, tape 12 mm.)
+2. Tap the button. (Wizard opens: centred dialog on desktop, full-screen sheet on a phone; three cards How is it connected?; Next is disabled until one is chosen.)
+3. Choose Bluetooth, Next, tap Scan. (Progress bar and "Scanning..."; list shows printers first with signal bars and Paired/Not paired; phones and headsets are under "Other devices".)
+4. With `pair=fail`, tap Pair on the unpaired PT-P710BT. (About 2 s "Pairing..."; then the failure sentence and a Retry button; Next stays disabled.)
+5. Switch the mock to `pair=ok` (reload with the query or use the `_mock/set` command), Retry. (Row becomes Paired and selected; Next enables.)
+6. Next. (Test step: "Connecting to the printer..." then "Connected: 12 mm laminated, white tape, black text"; "Print a test label" works; Next.)
+7. Name step. (Default name from the device; duplicates are refused with a message; Done selects the printer and the chip shows the name, status dot and "12 mm".)
+8. Tap the chip. (Right-hand drawer on desktop, full-screen sheet on phone: name, connection, state sentence, tape line, Connect (Bluetooth only), Test print, rename (pencil) and remove (bin); "Add printer" at the bottom; Esc or the close button returns focus to the chip.)
+9. With `connect=asleep_once`, tap Connect. ("Trying to reach the printer..."; after the wake time the asleep sentence and Retry; Retry succeeds and the chip dot turns green.)
+10. Rename: pencil, type, Enter. (Name updates in the drawer and the chip.) Remove: bin, confirm in the in-app dialog. (Printer disappears; with two printers "Use this printer" switches the active one and the tape follows it.)
+11. Make the printer asleep in the mock (`_mock/printer` with `online:false, reason:"asleep"`) and tap Print. (A strip under the top bar shows "Waiting for the printer... (up to 20 s)" with Cancel; afterwards the failure sentence with Retry, Dismiss and Printers. Cancel returns to idle at once and a later Print works.)
+12. `bt=no_dbus`, wizard > Bluetooth. (The "can't use Bluetooth here" sentence and buttons Use USB / Use network bridge; bridge URL must start with http:// or https://.)
+13. Check on a phone: all buttons at least 44 px, nothing hidden under the notch or gesture bar, no horizontal scroll, dark theme legible, landscape still usable.
+
+Not verified: real Bluetooth behaviour (forbidden for this piece), real WebKit, the wake wait with a real sleeping printer (the mock uses a few seconds instead of up to 20 s).

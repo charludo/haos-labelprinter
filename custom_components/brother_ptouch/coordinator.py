@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Callable
@@ -13,8 +14,10 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from PIL import Image
 
-from .const import (CONF_BATCH_WINDOW, CONF_ORIENTATION, CONF_TRANSPORT, DEFAULT_BATCH_WINDOW,
-                    DEFAULT_ORIENTATION, DOMAIN, SCAN_INTERVAL_SECONDS)
+from .const import (CONF_BATCH_WINDOW, CONF_ORIENTATION, CONF_TRANSPORT, CONF_WAKE_SECONDS,
+                    DEFAULT_BATCH_WINDOW, DEFAULT_ORIENTATION, DEFAULT_WAKE_SECONDS, DOMAIN,
+                    POLL_WAKE_SECONDS, REASON_ERROR, REASON_OK, SCAN_INTERVAL_SECONDS,
+                    friendly_message)
 from .ptouch import (JobOptions, PrinterError, PrinterStatus, PtouchError, build_jobs,
                      make_transport, mm_to_dots)
 from .ptouch.protocol import MEDIA_INCOMPATIBLE
@@ -48,14 +51,59 @@ class PTouchCoordinator(DataUpdateCoordinator[PrinterStatus]):
         self._print_lock = asyncio.Lock()
         self._pending: list[_Request] = []
         self._flush_task: asyncio.Task | None = None
+        self.last_reason: str = REASON_OK        # docs/BLUETOOTH_CONTRACT.md section 1
+        self.last_message: str = ""
+
+    # -- reason tracking ------------------------------------------------------
+    @property
+    def wake_seconds(self) -> float:
+        try:
+            return max(0.0, float(self.config_entry.options.get(CONF_WAKE_SECONDS, DEFAULT_WAKE_SECONDS)))
+        except (TypeError, ValueError):
+            return float(DEFAULT_WAKE_SECONDS)
+
+    def _record_ok(self) -> None:
+        self.last_reason, self.last_message = REASON_OK, ""
+
+    def _record_failure(self, err: Exception) -> str:
+        """Remember why talking to the printer failed; returns the friendly text."""
+        reason = getattr(err, "reason", REASON_ERROR) or REASON_ERROR
+        self.last_reason = reason
+        self.last_message = friendly_message(reason, str(err))
+        return self.last_message
+
+    def _status_call(self, wake: float):
+        """Blocking get_status with the given wake timeout (runs in the executor)."""
+        self.transport.wake_timeout = wake
+        return self.transport.get_status()
 
     async def _async_update_data(self) -> PrinterStatus:
         if self._print_lock.locked():          # don't fight a running job for the link
             return self.data
         try:
-            return await self.hass.async_add_executor_job(self.transport.get_status)
+            status = await self.hass.async_add_executor_job(self._status_call, POLL_WAKE_SECONDS)
         except PtouchError as err:
-            raise UpdateFailed(str(err)) from err
+            raise UpdateFailed(self._record_failure(err)) from err
+        self._record_ok()
+        return status
+
+    async def async_connect(self) -> dict:
+        """Try to reach the printer now (Connect button / bluetooth/connect); never raises for expected failures."""
+        if self._print_lock.locked():
+            return {"ok": False, "reason": "busy", "seconds": 0.0,
+                    "message": "The printer is printing right now."}
+        start = time.monotonic()
+        async with self._print_lock:
+            try:
+                status = await self.hass.async_add_executor_job(self._status_call, self.wake_seconds)
+            except PtouchError as err:
+                msg = self._record_failure(err)
+                return {"ok": False, "reason": self.last_reason,
+                        "seconds": round(time.monotonic() - start, 1), "message": msg}
+        self._record_ok()
+        self.async_set_updated_data(status)
+        return {"ok": True, "reason": REASON_OK, "seconds": round(time.monotonic() - start, 1),
+                "message": "Connected."}
 
     async def async_print(self, render: Renderer, *, copies: int = 1, auto_cut: bool = True,
                           cut_each: bool = False, margin_mm: float = 2.0) -> None:
@@ -91,7 +139,8 @@ class PTouchCoordinator(DataUpdateCoordinator[PrinterStatus]):
         orientation = self.config_entry.options.get(CONF_ORIENTATION, DEFAULT_ORIENTATION)
         async with self._print_lock:
             try:
-                status = await self.hass.async_add_executor_job(self.transport.get_status)
+                status = await self.hass.async_add_executor_job(self._status_call, self.wake_seconds)
+                self._record_ok()
                 self.async_set_updated_data(status)
                 if status.errors:
                     raise HomeAssistantError(f"Printer reports: {', '.join(status.errors)}")
@@ -114,6 +163,7 @@ class PTouchCoordinator(DataUpdateCoordinator[PrinterStatus]):
                         tape_mm=status.media_width, media_type=status.media_type,
                         auto_cut=any(r.auto_cut for r in ok), cut_each=any(r.cut_each for r in ok),
                         margin_dots=mm_to_dots(ok[0].margin_mm), orientation=orientation))
+                    self.transport.wake_timeout = self.wake_seconds
                     for job in jobs:
                         self.transport.print_job(job, pages=1)
 
@@ -121,4 +171,4 @@ class PTouchCoordinator(DataUpdateCoordinator[PrinterStatus]):
             except PrinterError as err:
                 raise HomeAssistantError(f"Printer error: {err}") from err
             except PtouchError as err:
-                raise HomeAssistantError(str(err)) from err
+                raise HomeAssistantError(self._record_failure(err)) from err

@@ -14,8 +14,10 @@ import io
 import json
 import re
 import sys
+import os
 import tempfile
 import threading
+import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -45,16 +47,87 @@ PINS = {4: 24, 6: 32, 9: 50, 12: 70, 18: 112, 24: 128}
 ASSETS = None
 LOCK = threading.Lock()
 DESIGNS: dict[str, dict] = {}
-PRINTERS = [
-    {"entry_id": "p1", "title": "PT-P710BT Office", "tape_mm": 12, "state": "idle"},
-    {"entry_id": "p2", "title": "PT-P710BT Workshop", "tape_mm": 4, "state": "idle"},
-]
+TAPE12 = {"width_mm": 12, "type": "laminated", "colour": "white", "text_colour": "black"}
+TAPE35 = {"width_mm": 3.5, "type": "laminated", "colour": "clear", "text_colour": "black"}
+PRINTERS: list[dict] = []   # filled by reset_state()
+# Dev switches (env MOCK_*, query string of dev/index.html via _mock/set, or POST brother_ptouch/_mock/set)
+SW: dict = {}
+SCAN: list[dict] = []
+SECRET_KEYS = {"token"}
 PRINT_LOG: list[dict] = []
 STUB_FONTS = [
     {"id": n.lower().replace(" ", "-"), "family": n, "category": c, "weights": [400, 700], "styles": ["normal", "italic"], "subsets": ["latin"]}
     for n, c in [("Roboto", "sans-serif"), ("Roboto Slab", "serif"), ("Lobster", "display"), ("Pacifico", "handwriting"), ("Roboto Mono", "monospace"), ("Open Sans", "sans-serif")]
 ]
 STUB_ICONS = ["mdi:tag", "mdi:home", "mdi:heart", "mdi:star", "mdi:wifi", "mdi:lightbulb", "mdi:key", "mdi:fire", "mdi:flash", "mdi:food", "mdi:cog", "mdi:alert"]
+
+
+def reset_state(printers=2):
+    """(Re)create the fake printers, the fake Bluetooth scan list and the switches."""
+    SW.clear()
+    SW.update({
+        "pair": os.environ.get("MOCK_PAIR", "ok"),            # ok | fail | timeout
+        "connect": os.environ.get("MOCK_CONNECT", "ok"),      # ok | asleep | asleep_once | busy
+        "bt": os.environ.get("MOCK_BT", "ok"),                # ok | no_dbus | bluetooth_off | no_adapter
+        "add": os.environ.get("MOCK_ADD", "ok"),              # ok | asleep | fail
+        "pair_secs": float(os.environ.get("MOCK_PAIR_SECS", "2")),
+        "wake_secs": float(os.environ.get("MOCK_WAKE_SECS", "3")),   # how long a print/connect waits on a sleeping printer (real: up to 20)
+        "scan_secs": float(os.environ.get("MOCK_SCAN_SECS", "1.5")),
+    })
+    PRINTERS.clear()
+    if printers >= 1:
+        PRINTERS.append({"entry_id": "p1", "title": "Office", "name": "Office", "transport": "bluetooth", "address": "AA:BB:CC:00:10:01",
+                         "online": True, "reason": "ok", "message": "", "tape_mm": 12, "tape": dict(TAPE12), "state": "idle"})
+    if printers >= 2:
+        PRINTERS.append({"entry_id": "p2", "title": "Workshop", "name": "Workshop", "transport": "usb", "serial": "A1B2C3D4",
+                         "online": True, "reason": "ok", "message": "", "tape_mm": 4, "tape": dict(TAPE35), "state": "idle"})
+    SCAN[:] = [
+        {"address": "AA:BB:CC:48:21:00", "name": "PT-P710BT4821", "paired": False, "trusted": False, "connected": False, "rssi": -58, "is_printer": True},
+        {"address": "AA:BB:CC:00:10:01", "name": "PT-P710BT1001", "paired": True, "trusted": True, "connected": False, "rssi": -49, "is_printer": True},
+        {"address": "11:22:33:44:55:01", "name": "Pixel 7", "paired": True, "trusted": True, "connected": False, "rssi": -63, "is_printer": False},
+        {"address": "11:22:33:44:55:02", "name": "Sam's iPhone", "paired": False, "trusted": False, "connected": False, "rssi": -72, "is_printer": False},
+        {"address": "11:22:33:44:55:03", "name": "WH-1000XM4", "paired": True, "trusted": False, "connected": True, "rssi": -80, "is_printer": False},
+        {"address": "11:22:33:44:55:04", "name": "JBL Flip 5", "paired": False, "trusted": False, "connected": False, "rssi": None, "is_printer": False},
+        {"address": "11:22:33:44:55:05", "name": "", "paired": False, "trusted": False, "connected": False, "rssi": -90, "is_printer": False},
+    ]
+
+
+def public(p):
+    return {k: v for k, v in p.items() if k not in SECRET_KEYS and not k.startswith("_")}
+
+
+def find_printer(m):
+    p = next((p for p in PRINTERS if p["entry_id"] == m.get("entry_id")), None)
+    if not p:
+        raise WsError("not_found", "Printer not found")
+    return p
+
+
+REASON_TEXT = {
+    "asleep": "The printer isn't answering. Press its power button to switch it on, make sure no phone is connected to it, then try again.",
+    "busy": "The printer is connected to something else (a phone?). Disconnect it and try again.",
+    "bluetooth_off": "Bluetooth is switched off on the Home Assistant host.",
+    "no_dbus": "Home Assistant can't use Bluetooth here. Use USB or the network bridge.",
+    "no_adapter": "Home Assistant can't use Bluetooth here. Use USB or the network bridge.",
+}
+
+
+def pre_delay(m):
+    """Sleep part of slow commands OUTSIDE the global lock so previews and other calls keep working."""
+    t = m.get("type", "")
+    if t == "bluetooth/scan":
+        time.sleep(min(float(m.get("duration", 8)), SW.get("scan_secs", 1.5)))
+    elif t == "bluetooth/pair":
+        time.sleep(SW.get("pair_secs", 2))
+    elif t in ("bluetooth/connect", "print", "printers/test_print", "printers/add"):
+        p = next((p for p in PRINTERS if p["entry_id"] == m.get("entry_id")), None)
+        sleeping = (p is not None and not p["online"]) or (t == "bluetooth/connect" and SW.get("connect") in ("asleep", "busy", "asleep_once"))
+        if t == "printers/add":
+            sleeping = SW.get("add") in ("asleep", "fail")
+        if sleeping:
+            time.sleep(SW.get("wake_secs", 3))
+        elif t != "print":
+            time.sleep(0.4)
 
 
 class WsError(Exception):
@@ -118,13 +191,106 @@ def do_preview(m):
             "length_mm": round(img.width * 25.4 / 180, 1), "warnings": warnings}
 
 
+def mock_control(t, m):
+    """Dev-only: _mock/set {key: value, ...} changes switches; _mock/reset {printers: 0..2}; _mock/get; _mock/printer {entry_id, ...fields}."""
+    if t == "_mock/reset":
+        reset_state(int(m.get("printers", 2)))
+    elif t == "_mock/set":
+        for k, v in m.items():
+            if k != "type":
+                SW[k] = v
+    elif t == "_mock/printer":
+        p = find_printer(m)
+        p.update({k: v for k, v in m.items() if k not in ("type", "entry_id")})
+    return {"switches": SW, "printers": [public(p) for p in PRINTERS], "print_log": PRINT_LOG}
+
+
+def handle_printers(t, m):
+    if t == "bluetooth/status":
+        r = SW["bt"]
+        return {"available": r == "ok", "reason": r, "adapters": [{"path": "/org/bluez/hci0", "address": "00:11:22:33:44:55", "name": "hci0", "powered": r != "bluetooth_off"}] if r in ("ok", "bluetooth_off") else []}
+    if t.startswith("bluetooth/") and SW["bt"] != "ok" and t != "bluetooth/forget":
+        raise WsError("bluetooth_unavailable", REASON_TEXT.get(SW["bt"], "Bluetooth is not available."))
+    if t == "bluetooth/scan":
+        configured = {p.get("address") for p in PRINTERS}
+        return {"devices": [dict(d, configured=d["address"] in configured) for d in SCAN if d["name"] or d["paired"]]}
+    if t == "bluetooth/pair":
+        d = next((d for d in SCAN if d["address"] == m.get("address")), None)
+        if not d:
+            raise WsError("device_not_found", "Home Assistant can't see that printer. Switch it on, keep it close and scan again.")
+        if SW["pair"] == "fail":
+            raise WsError("pairing_failed", "Pairing didn't work. Switch the printer off and on, keep it close, make sure no phone is connected to it, then try again.")
+        if SW["pair"] == "timeout":
+            raise WsError("pairing_timeout", "The printer didn't respond while pairing. Switch it on, keep it close and try again.")
+        d["paired"] = d["trusted"] = True
+        return {"device": dict(d)}
+    if t == "bluetooth/forget":
+        d = next((d for d in SCAN if d["address"] == m.get("address")), None)
+        if d:
+            d["paired"] = d["trusted"] = False
+        return {}
+    if t == "bluetooth/connect":
+        p = find_printer(m)
+        mode = SW["connect"]
+        if mode == "asleep_once":
+            SW["connect"] = "ok"
+            mode = "asleep"
+        if mode in ("asleep", "busy"):
+            p.update(online=False, reason=mode, message=REASON_TEXT[mode])
+            return {"ok": False, "reason": mode, "seconds": SW["wake_secs"], "message": REASON_TEXT[mode]}
+        p.update(online=True, reason="ok", message="", state="idle")
+        p["tape"] = p.get("tape") or dict(TAPE12)
+        p["tape_mm"] = 4 if p["tape"]["width_mm"] == 3.5 else p["tape"]["width_mm"]
+        return {"ok": True, "reason": "ok", "seconds": 1.2, "message": ""}
+    if t == "printers/add":
+        tr = m.get("transport")
+        if tr not in ("usb", "bluetooth", "bridge"):
+            raise WsError("invalid_format", "unknown transport")
+        key = {"bluetooth": m.get("address"), "usb": m.get("serial") or "usb", "bridge": m.get("url")}[tr]
+        if any(p.get(k) == key for p in PRINTERS for k in ("address", "serial", "url")):
+            raise WsError("already_configured", "This printer is already configured")
+        if SW["add"] != "ok":
+            raise WsError("cannot_connect", REASON_TEXT["asleep"])
+        n = 1 + max([int(p["entry_id"][1:]) for p in PRINTERS] + [0])
+        name = m.get("name") or {"bluetooth": "PT-P710BT", "usb": "PT-P710BT (USB)", "bridge": "PT-P710BT (bridge)"}[tr]
+        row = {"entry_id": f"p{n}", "title": name, "name": name, "transport": tr, "online": True, "reason": "ok", "message": "",
+               "tape_mm": 12, "tape": dict(TAPE12), "state": "idle"}
+        row.update({"bluetooth": {"address": m.get("address")}, "usb": {"serial": m.get("serial") or "A0B1C2D3"}, "bridge": {"url": m.get("url"), "_token": m.get("token")}}[tr])
+        PRINTERS.append(row)
+        return {"entry_id": row["entry_id"], "title": name}
+    if t == "printers/remove":
+        PRINTERS.remove(find_printer(m))
+        return {}
+    if t == "printers/rename":
+        p = find_printer(m)
+        name = (m.get("name") or "").strip()
+        if not name:
+            raise WsError("invalid_format", "name must not be empty")
+        p["title"] = p["name"] = name
+        return {}
+    if t == "printers/test_print":
+        p = find_printer(m)
+        if not p["online"]:
+            raise WsError("home_assistant_error", REASON_TEXT.get(p["reason"], p.get("message") or "Printing failed."))
+        PRINT_LOG.append({"test_print": p["entry_id"]})
+        print("[mock] TEST PRINT", p["entry_id"])
+        return {}
+    if t == "printers":
+        return {"printers": [public(p) for p in PRINTERS]}
+    raise WsError("unknown_command", t)
+
+
 def handle(m):
     t = m.get("type", "")
     if not t.startswith("brother_ptouch/"):
         raise WsError("unknown_command", t)
     t = t.split("/", 1)[1]
+    if t.startswith("_mock/"):
+        return mock_control(t, m)
+    if t.startswith(("bluetooth/", "printers/")):
+        return handle_printers(t, m)
     if t == "printers":
-        return {"printers": PRINTERS}
+        return {"printers": [public(p) for p in PRINTERS]}
     if t == "designs/list":
         return {"designs": [{"id": k, "name": v.get("name", k), "updated": v.get("updated", "")} for k, v in DESIGNS.items()]}
     if t == "designs/get":
@@ -169,6 +335,11 @@ def handle(m):
     if t == "print":
         if ("design" in m) == ("design_id" in m):
             raise WsError("home_assistant_error", "exactly one of design / design_id")
+        pr = next((p for p in PRINTERS if p["entry_id"] == m.get("entry_id")), PRINTERS[0] if len(PRINTERS) == 1 else None)
+        if pr is not None and not pr["online"]:
+            raise WsError("home_assistant_error", REASON_TEXT.get(pr["reason"], pr.get("message") or "Printing failed."))
+        if pr is not None and pr["state"] == "error":
+            raise WsError("home_assistant_error", pr.get("message") or "The printer reports an error.")
         if "design" in m:
             do_preview(m)  # validates
         PRINT_LOG.append({k: v for k, v in m.items() if k != "design"})
@@ -216,6 +387,7 @@ class Handler(SimpleHTTPRequestHandler):
             return
         try:
             msg = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+            pre_delay({**msg, "type": str(msg.get("type", "")).replace("brother_ptouch/", "", 1)})
             with LOCK:
                 body = {"result": handle(msg)}
         except WsError as exc:
@@ -232,6 +404,9 @@ class Handler(SimpleHTTPRequestHandler):
     def log_message(self, fmt, *args):
         if "/api/ws" not in (args[0] if args else ""):
             super().log_message(fmt, *args)
+
+
+reset_state()
 
 
 def main():

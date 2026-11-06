@@ -41,6 +41,13 @@ def _enable(enable_custom_integrations):
     yield
 
 
+@pytest.fixture(autouse=True)
+def _no_real_bluetooth(monkeypatch):
+    """Never let a test reach the real BlueZ / system D-Bus (docs/BLUETOOTH_CONTRACT.md section 0)."""
+    from custom_components.brother_ptouch import btutil
+    monkeypatch.setattr(btutil, "get_btadmin", lambda: None)
+
+
 @pytest.fixture
 def fake():
     f = Fake()

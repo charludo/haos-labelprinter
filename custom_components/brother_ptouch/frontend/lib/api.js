@@ -42,6 +42,19 @@ export class Api {
     if (entryId) msg.entry_id = entryId;
     return this.call("templates/build", msg);
   }
+  // ---- printer management (docs/BLUETOOTH_CONTRACT.md section 3) ----
+  btStatus() { return this.call("bluetooth/status"); }
+  /** -> BtDevice[] (address, name, paired, trusted, connected, rssi, is_printer, configured) */
+  btScan(duration = 8) { return this.call("bluetooth/scan", { duration }).then((r) => r.devices); }
+  btPair(address, pin) { const m = { address }; if (pin) m.pin = pin; return this.call("bluetooth/pair", m).then((r) => r.device); }
+  btForget(address) { return this.call("bluetooth/forget", { address }); }
+  /** -> {ok, reason, seconds, message}; may take up to ~20 s while the backend retries a sleeping printer. */
+  btConnect(entryId) { return this.call("bluetooth/connect", { entry_id: entryId }); }
+  /** -> {entry_id, title} */
+  addPrinter(cfg) { return this.call("printers/add", cfg); }
+  removePrinter(entryId) { return this.call("printers/remove", { entry_id: entryId }); }
+  renamePrinter(entryId, name) { return this.call("printers/rename", { entry_id: entryId, name }); }
+  testPrint(entryId) { return this.call("printers/test_print", { entry_id: entryId }); }
   searchIcons(query = "", limit = 120) { return this.call("icons/search", { query, limit }).then((r) => r.icons); }
 }
 
