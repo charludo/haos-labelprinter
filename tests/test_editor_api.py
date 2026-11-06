@@ -331,6 +331,19 @@ async def test_real_renderer_end_to_end(hass, hass_ws_client, fake, monkeypatch)
     assert "error" in r or r["success"]
 
 
+async def test_p300bt_printer_row_and_preview(hass, ws, fake):
+    from custom_components.brother_ptouch.ptouch.protocol import MODEL_P300BT
+    fake.st = status(model=MODEL_P300BT)
+    entry = await setup(hass)
+    p, = (await call(ws, "printers"))["result"]["printers"]
+    assert p["model"] == "PT-P300BT" and p["tape_pins"] == {"4": 24, "6": 32, "9": 50, "12": 64,
+                                                             "18": 112, "24": 128}
+    r = await call(ws, "preview", design=text_design())                 # tape from the printer
+    assert r["result"]["height"] == 64
+    r = await call(ws, "preview", design=text_design(), tape_mm=12, entry_id=entry.entry_id)
+    assert r["result"]["height"] == 64
+
+
 async def test_templates_list_build_and_print(hass, hass_ws_client, fake, monkeypatch):
     pytest.importorskip("custom_components.brother_ptouch.ptouch.templates")
     def no_assets(cache):
@@ -357,6 +370,12 @@ async def test_templates_list_build_and_print(hass, hass_ws_client, fake, monkey
     assert r["success"] and r["result"]["height"] == 70
     r = await call(client, "print", design=design, copies=1)
     assert r["success"] and len(fake.jobs) == 1
+    fake.st = status(model=0x72)                                       # PT-P300BT: 64 dots on 12 mm
+    await hass.config_entries.async_entries(DOMAIN)[0].runtime_data.async_refresh()
+    r = await call(client, "templates/build", template_id=tid)
+    assert all(e["y"] + e["h"] <= 64 for e in r["result"]["design"]["elements"])
+    r = await call(client, "preview", design=r["result"]["design"], tape_mm=12)
+    assert r["result"]["height"] == 64
 
 
 async def test_print_template_service_accepts_builtin_id(hass, fake, monkeypatch):

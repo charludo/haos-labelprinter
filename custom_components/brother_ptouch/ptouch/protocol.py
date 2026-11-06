@@ -1,4 +1,4 @@
-"""Brother P-touch raster protocol (PT-P700 / P750W / P710BT family).
+"""Brother P-touch raster protocol (PT-P700 / P750W / P710BT / P300BT family).
 
 Pure Python + Pillow. No Home Assistant imports, so it is shared by the
 integration and the standalone bridge.
@@ -29,11 +29,14 @@ TAPE_GEOMETRY: dict[int, tuple[int, int]] = {
 
 # Per-model differences, keyed by the model code (status byte 4). Unknown models
 # use TAPE_GEOMETRY and have a cutter.
-MODEL_NAMES: dict[int, str] = {}
+MODEL_P300BT = 0x72
+MODEL_NAMES: dict[int, str] = {MODEL_P300BT: "PT-P300BT"}
 # model -> tape width -> (printable pins, left margin pins), overriding TAPE_GEOMETRY
-MODEL_TAPE_GEOMETRY: dict[int, dict[int, tuple[int, int]]] = {}
+MODEL_TAPE_GEOMETRY: dict[int, dict[int, tuple[int, int]]] = {
+    MODEL_P300BT: {12: (64, 32)},   # 64-dot head, centred in the 128-pin raster
+}
 # models with a manual cutter only; for them "auto cut" (ESC i M bit 6) prints a cut mark
-MODELS_WITHOUT_CUTTER: frozenset[int] = frozenset()
+MODELS_WITHOUT_CUTTER: frozenset[int] = frozenset({MODEL_P300BT})
 
 MEDIA_NONE = 0x00
 MEDIA_LAMINATED = 0x01

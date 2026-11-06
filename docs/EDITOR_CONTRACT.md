@@ -17,7 +17,7 @@ Hard rules for every piece
 
 Coordinates are **dots at 180 dpi** (1 mm = 7.087 dots). Origin top-left of the label. `x` runs along
 the tape length, `y` across the tape width (0 .. pins-1, where pins = `tape_pins(tape_mm, model)`:
-3.5mm(4)->24, 6->32, 9->50, 12->70, 18->112, 24->128 on the PT-P7xx).
+3.5mm(4)->24, 6->32, 9->50, 12->70, 18->112, 24->128; the PT-P300BT prints 64 on 12 mm).
 
 ```json
 {

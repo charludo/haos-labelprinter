@@ -82,6 +82,27 @@ async def test_print_text_sends_job(hass, fake):
     assert pages == 1 and job.endswith(b"\x1a") and job.count(b"\x1biz") == 1
 
 
+async def test_print_on_p300bt(hass, fake):
+    from homeassistant.helpers import device_registry as dr
+    from custom_components.brother_ptouch.ptouch.protocol import MODEL_P300BT, unpackbits
+    fake.st = status(model=MODEL_P300BT)
+    entry = await setup(hass)
+    device, = dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
+    assert device.model == "PT-P300BT"
+    await hass.services.async_call(DOMAIN, "print_text", {"text": "Hello"}, blocking=True)
+    (job, _), = fake.jobs
+    assert b"\x1biM\x00" in job                    # auto_cut defaults on; the P300BT has no cutter
+    i, ink = job.index(b"M\x02") + 2, 0
+    while job[i] != 0x1A:                           # raster data: Z (blank) or G <len> <packbits>
+        if job[i] == ord("Z"):
+            i += 1
+            continue
+        n = int.from_bytes(job[i + 1:i + 3], "little")
+        ink |= int.from_bytes(unpackbits(job[i + 3:i + 3 + n]), "big")
+        i += 3 + n
+    assert ink and ink & ~(((1 << 64) - 1) << 32) == 0      # only pins 32..95 carry ink
+
+
 async def test_print_qr_and_image(hass, fake, tmp_path):
     from PIL import Image
     await setup(hass)

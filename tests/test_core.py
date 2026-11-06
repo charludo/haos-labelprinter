@@ -7,7 +7,7 @@ from PIL import Image
 import ptouch_bridge
 from ptouch import (HTTPTransport, JobOptions, PrinterError, PrinterStatus, TransportError,
                     build_job, render_image, render_qr, render_text, tape_pins)
-from ptouch.protocol import (STATUS_COMPLETED, STATUS_ERROR, image_to_lines, packbits,
+from ptouch.protocol import (MODEL_P300BT, STATUS_COMPLETED, STATUS_ERROR, image_to_lines, packbits,
                              split_status_packets, unpackbits)
 from ptouch.transport import Transport
 
@@ -50,6 +50,12 @@ def test_model_overrides_geometry(monkeypatch):
     assert render_text("x", 12, model=0x99).height == 64
 
 
+def test_status_model():
+    st = PrinterStatus.parse(status_bytes(model=MODEL_P300BT))
+    assert st.model == MODEL_P300BT and st.model_name == "PT-P300BT"
+    assert PrinterStatus.parse(status_bytes()).model_name is None
+
+
 def test_status_resync():
     buf = bytearray(b"\x01\x02" + status_bytes() + status_bytes(width=6)[:10])
     pkts = split_status_packets(buf)
@@ -73,6 +79,21 @@ def test_lines_geometry(mm):
     assert bin(bits).count("1") == 2
     flipped = image_to_lines(img, mm, "flip_feed")
     assert any(flipped[6]) and not any(flipped[3])
+
+
+def test_p300bt_geometry():
+    assert tape_pins(12, MODEL_P300BT) == 64 and tape_pins(12) == 70
+    for mm in (4, 6, 9):
+        assert tape_pins(mm, MODEL_P300BT) == tape_pins(mm)
+    lines = image_to_lines(Image.new("1", (1, 64), 0), 12, model=MODEL_P300BT)
+    assert int.from_bytes(lines[0], "big") == ((1 << 64) - 1) << 32      # pins 32..95
+    with pytest.raises(Exception):
+        image_to_lines(Image.new("1", (1, 70), 0), 12, model=MODEL_P300BT)
+
+
+def test_p300bt_never_cuts():
+    job = build_job([Image.new("1", (20, 64), 0)], JobOptions(tape_mm=12, model=MODEL_P300BT))
+    assert b"\x1biM\x00" in job and b"\x1biM\x40" not in job
 
 
 def test_wrong_height_rejected():
@@ -100,13 +121,14 @@ def test_blank_lines_use_Z():
     assert job.count(b"Z") >= 5
 
 
-def test_render_heights():
+@pytest.mark.parametrize("model", [None, MODEL_P300BT])
+def test_render_heights(model):
     for mm in (6, 9, 12, 18, 24):
-        pins = tape_pins(mm)
-        assert render_text("Hello\nWorld", mm).height == pins
-        assert render_text("x", mm, font_size=20).height == pins
-        assert render_qr("https://example.com", mm).height == pins if mm >= 12 else True
-        assert render_image(Image.new("RGB", (300, 100), "red"), mm).height == pins
+        pins = tape_pins(mm, model)
+        assert render_text("Hello\nWorld", mm, model=model).height == pins
+        assert render_text("x", mm, font_size=20, model=model).height == pins
+        assert render_qr("https://example.com", mm, model=model).height == pins if mm >= 12 else True
+        assert render_image(Image.new("RGB", (300, 100), "red"), mm, model=model).height == pins
 
 
 def test_text_has_ink():

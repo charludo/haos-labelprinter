@@ -1,4 +1,4 @@
-"""Brother P-touch (PT-P710BT) protocol core. No Home Assistant imports."""
+"""Brother P-touch (PT-P710BT / PT-P300BT) protocol core. No Home Assistant imports."""
 from .errors import PrinterError, PtouchError, ProtocolError, TransportError
 from .protocol import (
     ORIENTATIONS,
