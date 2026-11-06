@@ -27,6 +27,14 @@ TAPE_GEOMETRY: dict[int, tuple[int, int]] = {
     24: (128, 0),
 }
 
+# Per-model differences, keyed by the model code (status byte 4). Unknown models
+# use TAPE_GEOMETRY and have a cutter.
+MODEL_NAMES: dict[int, str] = {}
+# model -> tape width -> (printable pins, left margin pins), overriding TAPE_GEOMETRY
+MODEL_TAPE_GEOMETRY: dict[int, dict[int, tuple[int, int]]] = {}
+# models with a manual cutter only; for them "auto cut" (ESC i M bit 6) prints a cut mark
+MODELS_WITHOUT_CUTTER: frozenset[int] = frozenset()
+
 MEDIA_NONE = 0x00
 MEDIA_LAMINATED = 0x01
 MEDIA_NON_LAMINATED = 0x03
@@ -93,6 +101,7 @@ class PrinterStatus:
     phase: int
     tape_colour: int
     text_colour: int
+    model: int = 0
 
     @classmethod
     def parse(cls, raw: bytes) -> "PrinterStatus":
@@ -100,7 +109,7 @@ class PrinterStatus:
             raise ProtocolError(f"invalid status packet: {raw.hex()}")
         return cls(raw=bytes(raw), error1=raw[8], error2=raw[9], media_width=raw[10],
                    media_type=raw[11], status_type=raw[18], phase=raw[19],
-                   tape_colour=raw[24], text_colour=raw[25])
+                   tape_colour=raw[24], text_colour=raw[25], model=raw[4])
 
     @property
     def errors(self) -> list[str]:
@@ -117,6 +126,10 @@ class PrinterStatus:
         if self.errors:
             return "error"
         return "printing" if self.phase == 0x01 else "idle"
+
+    @property
+    def model_name(self) -> str | None:
+        return MODEL_NAMES.get(self.model)
 
     @property
     def media_type_name(self) -> str:
@@ -188,21 +201,29 @@ def unpackbits(data: bytes) -> bytes:
 # --------------------------------------------------------------------------
 # Image -> raster lines -> job
 # --------------------------------------------------------------------------
-def tape_pins(tape_mm: int) -> int:
+def tape_geometry(tape_mm: int, model: int | None = None) -> tuple[int, int]:
+    """(printable pins, left margin pins) of *tape_mm* tape on printer *model*."""
     try:
-        return TAPE_GEOMETRY[tape_mm][0]
+        return MODEL_TAPE_GEOMETRY.get(model, {}).get(tape_mm) or TAPE_GEOMETRY[tape_mm]
     except KeyError:
         raise ProtocolError(f"unsupported tape width {tape_mm} mm") from None
 
 
-def image_to_lines(img: Image.Image, tape_mm: int, orientation: str = "normal") -> list[bytes]:
+def tape_pins(tape_mm: int, model: int | None = None) -> int:
+    return tape_geometry(tape_mm, model)[0]
+
+
+def has_cutter(model: int | None) -> bool:
+    return model not in MODELS_WITHOUT_CUTTER
+
+
+def image_to_lines(img: Image.Image, tape_mm: int, orientation: str = "normal",
+                   model: int | None = None) -> list[bytes]:
     """Convert a label image (height == printable pins) into 16-byte raster lines.
 
     One raster line is one column of the image; x=0 is the first line fed.
     """
-    pins, left = TAPE_GEOMETRY.get(tape_mm, (None, None))
-    if pins is None:
-        raise ProtocolError(f"unsupported tape width {tape_mm} mm")
+    pins, left = tape_geometry(tape_mm, model)
     if orientation not in ORIENTATIONS:
         raise ProtocolError(f"unknown orientation {orientation!r}")
     if img.height != pins:
@@ -231,6 +252,7 @@ class JobOptions:
     margin_dots: int = 14        # feed margin / gap between labels; 14 dots == ~2 mm at 180 dpi
     compress: bool = True
     orientation: str = "normal"
+    model: int | None = None     # status byte 4; None = PT-P7xx geometry
 
 
 def mm_to_dots(mm: float) -> int:
@@ -267,13 +289,13 @@ def build_job(images: Sequence[Image.Image], opts: JobOptions) -> bytes:
     img = compose_strip(images, max(0, opts.margin_dots))
     if img.width > MAX_STRIP_DOTS:
         raise ProtocolError(f"label is {img.width} dots long; the maximum is {MAX_STRIP_DOTS}")
-    lines = image_to_lines(img, opts.tape_mm, opts.orientation)
+    lines = image_to_lines(img, opts.tape_mm, opts.orientation, opts.model)
     margin = max(0, min(opts.margin_dots, 0xFFFF))
     out = bytearray(CMD_INVALIDATE + CMD_INIT + CMD_RASTER_MODE)
     # print information: flags(kind|width|recover), type, width, length, lines, page, 0
     out += b"\x1biz" + bytes([0x02 | 0x04 | 0x80, opts.media_type, opts.tape_mm, 0])
     out += len(lines).to_bytes(4, "little") + bytes([0, 0])
-    out += b"\x1biM" + bytes([0x40 if opts.auto_cut else 0x00])
+    out += b"\x1biM" + bytes([0x40 if opts.auto_cut and has_cutter(opts.model) else 0x00])
     out += b"\x1biK\x08"                      # no chain printing: feed and cut at the end
     out += b"\x1bid" + margin.to_bytes(2, "little")
     out += b"M" + (b"\x02" if opts.compress else b"\x00")

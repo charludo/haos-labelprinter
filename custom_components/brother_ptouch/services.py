@@ -110,18 +110,18 @@ def async_register_services(hass: HomeAssistant) -> None:
         coord = _coordinator(hass, call)
         font = _check_font(hass, call)
         await coord.async_print(
-            lambda mm: [render_text(call.data["text"], mm, font_size=call.data.get("font_size"),
-                                    font_path=font, align=call.data["align"])],
+            lambda mm, model: [render_text(call.data["text"], mm, font_size=call.data.get("font_size"),
+                                           font_path=font, align=call.data["align"], model=model)],
             **_job_args(call))
 
     async def print_qr(call: ServiceCall) -> None:
         coord = _coordinator(hass, call)
         font = _check_font(hass, call)
 
-        def render(mm: int):
+        def render(mm: int, model: int):
             try:
                 return [render_qr(call.data["data"], mm, text=call.data.get("text"),
-                                  font_size=call.data.get("font_size"), font_path=font)]
+                                  font_size=call.data.get("font_size"), font_path=font, model=model)]
             except ProtocolError as err:
                 raise HomeAssistantError(str(err)) from err
         await coord.async_print(render, **_job_args(call))
@@ -130,9 +130,9 @@ def async_register_services(hass: HomeAssistant) -> None:
         coord = _coordinator(hass, call)
         data = await _load_image_bytes(hass, call)
 
-        def render(mm: int):
+        def render(mm: int, model: int):
             try:
-                return [render_image(data, mm, dither=call.data["dither"])]
+                return [render_image(data, mm, dither=call.data["dither"], model=model)]
             except (OSError, ProtocolError) as err:
                 raise HomeAssistantError(f"cannot use image: {err}") from err
         await coord.async_print(render, **_job_args(call))
@@ -152,7 +152,7 @@ def async_register_services(hass: HomeAssistant) -> None:
             if status is None or not status.has_tape:
                 raise HomeAssistantError("No compatible tape loaded in the printer") from None
             try:
-                design = templates.build_template(ref, status.media_width)
+                design = templates.build_template(ref, status.media_width, status.model)
             except PtouchError as err:
                 raise HomeAssistantError(str(err)) from err
         await async_print_design(hass, coord, design, call.data["variables"], copies=call.data["copies"],

@@ -14,9 +14,9 @@ from custom_components.brother_ptouch.ptouch.transport import Transport
 pytest_plugins = "pytest_homeassistant_custom_component"
 
 
-def status(width=12, media=0x01, err1=0):
+def status(width=12, media=0x01, err1=0, model=0x00):
     b = bytearray(32)
-    b[0], b[1], b[2], b[3] = 0x80, 0x20, 0x42, 0x30
+    b[0], b[1], b[2], b[3], b[4] = 0x80, 0x20, 0x42, 0x30, model
     b[8], b[10], b[11], b[24], b[25] = err1, width, media, 0x01, 0x08
     return PrinterStatus.parse(bytes(b))
 

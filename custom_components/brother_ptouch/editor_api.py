@@ -167,11 +167,11 @@ async def async_resolve_templates(hass: HomeAssistant, design: dict,
     return resolved, warnings
 
 
-def _render_callable(resolved: dict, assets: Any) -> Callable[[int], list]:
+def _render_callable(resolved: dict, assets: Any) -> Callable[[int, int], list]:
     render_design = _design_module().render_design
 
-    def render(tape_mm: int) -> list:
-        return [render_design(resolved, tape_mm, variables=None, assets=assets)]
+    def render(tape_mm: int, model: int) -> list:
+        return [render_design(resolved, tape_mm, variables=None, assets=assets, model=model)]
     return render
 
 
@@ -202,11 +202,12 @@ def find_coordinator(hass: HomeAssistant, entry_id: str | None) -> Any:
     return entries[0].runtime_data
 
 
-def _loaded_tape(entry: Any) -> int | None:
-    status = getattr(entry.runtime_data, "data", None)
-    if status is not None and getattr(status, "has_tape", False):
-        return int(status.media_width)
-    return None
+def _loaded_status(hass: HomeAssistant, entry_id: str | None) -> Any:
+    """Last status of the printer *entry_id* (or of the only printer), else None."""
+    entries = _loaded_coordinators(hass)
+    if entry_id:
+        entries = [e for e in entries if e.entry_id == entry_id]
+    return getattr(entries[0].runtime_data, "data", None) if len(entries) == 1 else None
 
 
 def _png_b64(img: Any) -> str:
@@ -215,11 +216,12 @@ def _png_b64(img: Any) -> str:
     return base64.b64encode(buf.getvalue()).decode("ascii")
 
 
-def _preview_sync(resolved: dict, tape_mm: int, assets: Any) -> tuple[Any, list[str]]:
+def _preview_sync(resolved: dict, tape_mm: int, assets: Any,
+                  model: int | None = None) -> tuple[Any, list[str]]:
     mod = _design_module()
-    img = mod.render_design(resolved, tape_mm, variables=None, assets=assets)
+    img = mod.render_design(resolved, tape_mm, variables=None, assets=assets, model=model)
     try:
-        warnings = list(mod.design_warnings(resolved, tape_mm, assets=assets))
+        warnings = list(mod.design_warnings(resolved, tape_mm, assets=assets, model=model))
     except Exception as err:  # noqa: BLE001
         _LOGGER.debug("design_warnings failed: %s", err)
         warnings = []
@@ -326,17 +328,16 @@ async def ws_delete(hass, connection, msg):
     vol.Optional("variables"): dict,
 })
 async def ws_preview(hass, connection, msg):
+    status = _loaded_status(hass, msg.get("entry_id"))
+    model = getattr(status, "model", None)
     if "tape_mm" in msg:
         tape_mm = _norm_tape(msg["tape_mm"])
     else:
-        entries = _loaded_coordinators(hass)
-        if msg.get("entry_id"):
-            entries = [e for e in entries if e.entry_id == msg["entry_id"]]
-        tape = _loaded_tape(entries[0]) if len(entries) == 1 else None
+        tape = int(status.media_width) if getattr(status, "has_tape", False) else None
         tape_mm = tape if tape in TAPE_GEOMETRY else DEFAULT_TAPE_MM
     resolved, warnings = await async_resolve_templates(hass, msg["design"], msg.get("variables"))
     assets = await async_get_assets(hass)
-    img, more = await hass.async_add_executor_job(_preview_sync, resolved, tape_mm, assets)
+    img, more = await hass.async_add_executor_job(_preview_sync, resolved, tape_mm, assets, model)
     png = await hass.async_add_executor_job(_png_b64, img)
     connection.send_result(msg["id"], {
         "png": png, "width": img.width, "height": img.height, "tape_mm": tape_mm,
@@ -437,7 +438,9 @@ async def ws_templates_build(hass, connection, msg):
         coord = find_coordinator(hass, msg.get("entry_id"))
         status = getattr(coord, "data", None)
         tape = status.media_width if status is not None and status.has_tape else 12
-    design = templates.build_template(msg["template_id"], tape)
+    else:
+        status = _loaded_status(hass, msg.get("entry_id"))
+    design = templates.build_template(msg["template_id"], tape, getattr(status, "model", None))
     connection.send_result(msg["id"], {"design": design, "tape_mm": tape})
 
 

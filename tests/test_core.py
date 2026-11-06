@@ -12,9 +12,10 @@ from ptouch.protocol import (STATUS_COMPLETED, STATUS_ERROR, image_to_lines, pac
 from ptouch.transport import Transport
 
 
-def status_bytes(width=12, media=0x01, err1=0, err2=0, stype=0x00, phase=0x00, colour=0x01, text=0x08):
+def status_bytes(width=12, media=0x01, err1=0, err2=0, stype=0x00, phase=0x00, colour=0x01, text=0x08,
+                 model=0x00):
     b = bytearray(32)
-    b[0], b[1], b[2], b[3] = 0x80, 0x20, 0x42, 0x30
+    b[0], b[1], b[2], b[3], b[4] = 0x80, 0x20, 0x42, 0x30, model
     b[8], b[9], b[10], b[11], b[18], b[19], b[24], b[25] = err1, err2, width, media, stype, phase, colour, text
     return bytes(b)
 
@@ -37,6 +38,16 @@ def test_status_parse():
     assert err.errors == ["no_media", "cover_open"] and err.state == "error"
     with pytest.raises(Exception):
         PrinterStatus.parse(b"\x00" * 32)
+
+
+def test_model_overrides_geometry(monkeypatch):
+    from ptouch import protocol
+    monkeypatch.setitem(protocol.MODEL_TAPE_GEOMETRY, 0x99, {12: (64, 32)})
+    assert PrinterStatus.parse(status_bytes(model=0x99)).model == 0x99
+    assert tape_pins(12, 0x99) == 64 and tape_pins(12) == 70 and tape_pins(9, 0x99) == 50
+    lines = image_to_lines(Image.new("1", (1, 64), 0), 12, model=0x99)
+    assert int.from_bytes(lines[0], "big") == ((1 << 64) - 1) << 32      # pins 32..95
+    assert render_text("x", 12, model=0x99).height == 64
 
 
 def test_status_resync():

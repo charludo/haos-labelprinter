@@ -40,10 +40,10 @@ def _fake_design_module():
             raise DesignError("bad design")
         return d
 
-    def render_design(design, tape_mm, *, variables=None, assets=None):
+    def render_design(design, tape_mm, *, variables=None, assets=None, model=None):
         calls.append((copy.deepcopy(design), tape_mm, variables, assets))
         texts = "".join(str(e.get("text", e.get("data", ""))) for e in design.get("elements", []))
-        img = Image.new("1", (20 + 10 * len(texts), tape_pins(tape_mm)), 1)
+        img = Image.new("1", (20 + 10 * len(texts), tape_pins(tape_mm, model)), 1)
         ImageDraw.Draw(img).rectangle((1, 1, 5, 5), fill=0)
         return img
 
@@ -192,6 +192,7 @@ async def test_print_one_job(hass, ws, fake, design_mod):
     r = await call(ws, "printers")
     p, = r["result"]["printers"]
     assert p["entry_id"] == entry.entry_id and p["tape_mm"] == 12 and p["state"] == "idle"
+    assert p["model"] is None and p["tape_pins"]["12"] == 70
     r = await call(ws, "print", design=text_design(), design_id="x")
     assert not r["success"]
     r = await call(ws, "print")

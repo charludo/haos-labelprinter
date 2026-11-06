@@ -113,6 +113,7 @@ class BrotherPtouchPanel extends HTMLElement {
 
   /** Re-fetch the printer rows (normalised); keeps the active printer if it still exists. */
   async _refreshPrinters(initial = false) {
+    const pins = this.pins;
     try { this.s.printers = (await this.api.printers()).map(PL.normalizePrinter); }
     catch (e) { if (initial) this._notify(e.message || String(e), "err"); else throw e; }
     finally { this.s.printersLoaded = true; }
@@ -120,6 +121,7 @@ class BrotherPtouchPanel extends HTMLElement {
     if (id !== this.s.entryId) { const had = this.s.entryId; this.s.entryId = id; if (had !== id) this.previewer?.request(); }
     storage.set("entry", this.s.entryId);
     this._renderTop();
+    if (this.pins !== pins) this._renderCanvas();   // the printer's dots per tape can differ
     if (this.printerDrawer && !this.$.layer.hidden && this.$.layer.dataset.mode === "printers") this.printerDrawer.render();
   }
   _selectPrinter(id) { this.s.entryId = id; storage.set("entry", id); this._renderTop(); this.previewer.request(); }
@@ -223,7 +225,7 @@ class BrotherPtouchPanel extends HTMLElement {
     $.dlgAlt = h("button", { class: "btn", type: "button", hidden: true });
     $.dialog = h("div", { class: "dialog", role: "alertdialog", "aria-modal": "true" }, $.dlgText, h("div", { class: "acts" }, $.dlgCancel, $.dlgAlt, $.dlgOk));
     this.m = createMobile(this, t);
-    this.gallery = createGallery({ api: { templatesList: () => this.api.templatesList(), buildTemplate: (id, tape) => this.api.buildTemplate(id, tape), preview: (d, o) => this.api.preview(d, o) },
+    this.gallery = createGallery({ api: { templatesList: () => this.api.templatesList(), buildTemplate: (id, tape) => this.api.buildTemplate(id, tape, this.s.entryId || undefined), preview: (d, o) => this.api.preview(d, { ...o, entry_id: this.s.entryId || undefined }) },
       t, getTape: () => this.tape, onPick: (tpl) => this._newFromTemplate(tpl), onClose: () => this._closeLayer() });
     // the api object is created when hass arrives: components call through this proxy
     const lazy = new Proxy({}, { get: (_, k) => (...a) => this.api[k](...a) });
@@ -408,7 +410,7 @@ class BrotherPtouchPanel extends HTMLElement {
     if (this.s.tapeSel !== "auto") return this.s.tapeSel;
     return this.s.preview?.tape_mm ?? this.printer?.tape_mm ?? 12;
   }
-  get pins() { return G.tapePins(this.tape); }
+  get pins() { return G.tapePins(this.tape, this.printer?.tape_pins); }
   get labelW() { const d = this.store.design; return d.elements.length || d.length_mm != null ? G.labelLengthDots(d) : 140; }
   get offX() { return G.contentOffsetX(this.store.design); }
   get zoom() { return this.s.zoom; }
@@ -1090,7 +1092,7 @@ class BrotherPtouchPanel extends HTMLElement {
   }
 
   _add(type, info) {
-    const el = newElement(type, this.store.design, this.tape, info);
+    const el = newElement(type, this.store.design, this.tape, info, this.printer?.tape_pins);
     this._closeLayer();
     this.store.addElement(el);
     if (this.s.layout === "narrow") this.m.openSheet("element", "peek");   // new elements need content: show their fields

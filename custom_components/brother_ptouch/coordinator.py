@@ -26,8 +26,8 @@ _LOGGER = logging.getLogger(__name__)
 
 type PTouchConfigEntry = ConfigEntry[PTouchCoordinator]
 
-# render(tape_mm) -> list of 1-bit images (one label each)
-Renderer = Callable[[int], list[Image.Image]]
+# render(tape_mm, model) -> list of 1-bit images (one label each)
+Renderer = Callable[[int, int], list[Image.Image]]
 
 
 @dataclass
@@ -152,7 +152,7 @@ class PTouchCoordinator(DataUpdateCoordinator[PrinterStatus]):
                     ok: list[_Request] = []
                     for r in batch:             # a bad request fails alone, not the batch
                         try:
-                            images += r.render(status.media_width) * r.copies
+                            images += r.render(status.media_width, status.model) * r.copies
                             ok.append(r)
                         except Exception as err:  # noqa: BLE001
                             if not r.future.done():
@@ -162,7 +162,8 @@ class PTouchCoordinator(DataUpdateCoordinator[PrinterStatus]):
                     jobs = build_jobs(images, JobOptions(
                         tape_mm=status.media_width, media_type=status.media_type,
                         auto_cut=any(r.auto_cut for r in ok), cut_each=any(r.cut_each for r in ok),
-                        margin_dots=mm_to_dots(ok[0].margin_mm), orientation=orientation))
+                        margin_dots=mm_to_dots(ok[0].margin_mm), orientation=orientation,
+                        model=status.model))
                     self.transport.wake_timeout = self.wake_seconds
                     for job in jobs:
                         self.transport.print_job(job, pages=1)

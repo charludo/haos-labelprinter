@@ -453,7 +453,8 @@ async def test_test_print_label_text(hass, ws, tr, monkeypatch):
     seen = []
     from custom_components.brother_ptouch import printer_api
     real = printer_api.render_text
-    monkeypatch.setattr(printer_api, "render_text", lambda text, tape: seen.append((text, tape)) or real(text, tape))
+    monkeypatch.setattr(printer_api, "render_text",
+                        lambda text, tape, **kw: seen.append((text, tape)) or real(text, tape, **kw))
     entry = await bt_entry(hass)
     r = await call(ws, "printers/test_print", entry_id=entry.entry_id)
     assert r["success"]
