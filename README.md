@@ -43,7 +43,6 @@ Whether it worked or not, we want to know. It takes two minutes, and it is how t
 1. In Home Assistant open **HACS**. Click the three dots at the top right and choose **Custom repositories**.
 2. Paste `https://github.com/thatgoodpickle/haos-labelprinter`, choose the type **Integration**, and click **Add**.
 3. Find **Brother P-touch** in HACS and click **Download**.
-   *While only pre-releases exist, you must first turn on **Show beta versions** in the HACS download dialog, or the download button will not offer a version.*
 4. **Restart Home Assistant.**
 5. Go to **Settings > Devices & services > Add integration**, search for **Brother P-touch**, and follow the steps.
 

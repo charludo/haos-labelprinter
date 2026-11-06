@@ -17,7 +17,7 @@ This guide takes you from nothing to a printed label. No coding needed.
 3. In **Repository** paste `https://github.com/thatgoodpickle/haos-labelprinter`.
 4. In **Type** choose **Integration**. Click **Add**.
 5. Search for **Brother P-touch** and open it.
-6. Click **Download**. While only pre-releases exist, turn on **Show beta versions** in that dialog first, then pick the newest version.
+6. Click **Download**, then pick the newest version.
 7. **Restart Home Assistant** (Settings > System > Restart).
 
 ## 2. Add the integration
@@ -87,7 +87,7 @@ If the label comes out mirrored or upside down, go to the integration, click **C
 
 ## Updating
 
-1. In HACS open **Brother P-touch** and click **Update** (turn on **Show beta versions** if the update is a pre-release).
+1. In HACS open **Brother P-touch** and click **Update**.
 2. Restart Home Assistant.
 3. Hard-refresh your browser (Ctrl+Shift+R, or Cmd+Shift+R on a Mac).
 4. In the Home Assistant Companion app, clear the app cache (Settings > Companion app > Troubleshooting), or the old editor may stay on screen. The exact menu depends on the app version.
