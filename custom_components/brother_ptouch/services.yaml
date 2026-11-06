@@ -88,3 +88,20 @@ print_image:
     auto_cut: *auto_cut
     cut_each: *cut_each
     margin_mm: *margin
+
+print_template:
+  fields:
+    device_id: *device
+    template:
+      required: true
+      example: "spice-jar"
+      selector:
+        text:
+    variables:
+      example: '{"name": "Paprika"}'
+      selector:
+        object:
+    copies: *copies
+    auto_cut: *auto_cut
+    cut_each: *cut_each
+    margin_mm: *margin

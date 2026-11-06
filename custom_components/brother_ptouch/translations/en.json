@@ -116,6 +116,19 @@
         "cut_each": { "name": "Cut each label", "description": "With several copies, cut after every label instead of printing one continuous strip. Wastes tape." },
         "margin_mm": { "name": "Feed margin", "description": "Blank tape fed before/after the label." }
       }
+    },
+    "print_template": {
+      "name": "Print label design",
+      "description": "Print a label design saved in the Labels editor. Home Assistant templates in the design are rendered first.",
+      "fields": {
+        "device_id": { "name": "Printer", "description": "Needed only if you have more than one printer." },
+        "template": { "name": "Design", "description": "ID or name of the saved design." },
+        "variables": { "name": "Variables", "description": "Values for {{ name }} placeholders; they override the design defaults." },
+        "copies": { "name": "Copies", "description": "Number of labels." },
+        "auto_cut": { "name": "Auto cut", "description": "Cut at the end of the job." },
+        "cut_each": { "name": "Cut each label", "description": "With several copies, cut after every label instead of printing one continuous strip. Wastes tape." },
+        "margin_mm": { "name": "Feed margin", "description": "Blank tape fed before/after the label." }
+      }
     }
   }
 }

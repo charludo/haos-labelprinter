@@ -7,11 +7,12 @@
   "issue_tracker": "https://github.com/9112003040/haos-labelprinter/issues",
   "integration_type": "device",
   "iot_class": "local_polling",
-  "requirements": ["pyusb>=1.2.1", "segno>=1.6.0"],
+  "dependencies": ["http", "frontend", "panel_custom", "websocket_api"],
+  "requirements": ["pyusb>=1.2.1", "segno>=1.6.0", "python-barcode>=0.15.1"],
   "usb": [
     {"vid": "04F9", "pid": "20AF", "description": "*p710bt*"},
     {"vid": "04F9", "pid": "2061"},
     {"vid": "04F9", "pid": "2062"}
   ],
-  "version": "0.1.0"
+  "version": "0.2.0"
 }

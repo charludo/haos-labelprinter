@@ -6,6 +6,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN
+from .editor_api import async_setup_editor
 from .coordinator import PTouchConfigEntry, PTouchCoordinator
 from .services import async_register_services
 
@@ -14,6 +15,7 @@ PLATFORMS = [Platform.SENSOR, Platform.BINARY_SENSOR]
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     async_register_services(hass)
+    await async_setup_editor(hass)
     return True
 
 

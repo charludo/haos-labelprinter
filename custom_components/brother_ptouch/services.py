@@ -11,7 +11,8 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .const import DOMAIN
 from .coordinator import PTouchCoordinator
-from .ptouch import ProtocolError, render_image, render_qr, render_text
+from .editor_api import async_find_design, async_print_design
+from .ptouch import ProtocolError, PtouchError, render_image, render_qr, render_text
 
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
 
@@ -46,6 +47,11 @@ IMAGE_SCHEMA = vol.All(
     }),
     cv.has_at_least_one_key("image_path", "image_url"),
 )
+TEMPLATE_SCHEMA = vol.Schema({
+    **COMMON,
+    vol.Required("template"): cv.string,
+    vol.Optional("variables", default=dict): dict,
+})
 
 
 def _coordinator(hass: HomeAssistant, call: ServiceCall) -> PTouchCoordinator:
@@ -131,6 +137,29 @@ def async_register_services(hass: HomeAssistant) -> None:
                 raise HomeAssistantError(f"cannot use image: {err}") from err
         await coord.async_print(render, **_job_args(call))
 
+    async def print_template(call: ServiceCall) -> None:
+        coord = _coordinator(hass, call)
+        ref = call.data["template"]
+        try:
+            design = await async_find_design(hass, ref)
+        except HomeAssistantError:
+            # Not a saved design: maybe a built-in template id (e.g. "freezer-food").
+            from .ptouch import templates
+            if ref not in {t["id"] for t in templates.list_templates()}:
+                raise
+            await coord.async_refresh()           # sized for the tape that is in the printer now
+            status = coord.data
+            if status is None or not status.has_tape:
+                raise HomeAssistantError("No compatible tape loaded in the printer") from None
+            try:
+                design = templates.build_template(ref, status.media_width)
+            except PtouchError as err:
+                raise HomeAssistantError(str(err)) from err
+        await async_print_design(hass, coord, design, call.data["variables"], copies=call.data["copies"],
+                                 auto_cut=call.data["auto_cut"], cut_each=call.data["cut_each"],
+                                 margin_mm=call.data["margin_mm"])
+
+    hass.services.async_register(DOMAIN, "print_template", print_template, schema=TEMPLATE_SCHEMA)
     hass.services.async_register(DOMAIN, "print_text", print_text, schema=TEXT_SCHEMA)
     hass.services.async_register(DOMAIN, "print_qr", print_qr, schema=QR_SCHEMA)
     hass.services.async_register(DOMAIN, "print_image", print_image, schema=IMAGE_SCHEMA)

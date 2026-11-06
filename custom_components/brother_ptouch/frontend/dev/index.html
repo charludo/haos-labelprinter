@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Label editor dev harness</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css">
+<style>
+  html, body { margin:0; height:100%; }
+  body { font-family: Roboto, system-ui, sans-serif; }
+  /* mimic Home Assistant theme variables */
+  html { --primary-background-color:#fafafa; --card-background-color:#fff; --primary-text-color:#212121; --secondary-text-color:#727272;
+         --divider-color:rgba(0,0,0,.12); --primary-color:#03a9f4; --text-primary-color:#fff; --secondary-background-color:#e5e5e5; --error-color:#db4437; --warning-color:#ffa726; }
+  html.dark { --primary-background-color:#111111; --card-background-color:#1c1c1c; --primary-text-color:#e1e1e1; --secondary-text-color:#9b9b9b;
+         --divider-color:rgba(225,225,225,.12); --secondary-background-color:#282828; color-scheme: dark; }
+  brother-ptouch-panel { display:block; height:100%; }
+</style>
+</head>
+<body>
+<script>
+  // Query: ?theme=dark  ?narrow=1  ?printers=0
+  const q = new URLSearchParams(location.search);
+  if (q.get("theme") === "dark") document.documentElement.classList.add("dark");
+
+  // <ha-icon> stand-in: renders the MDI webfont glyph.
+  customElements.define("ha-icon", class extends HTMLElement {
+    static get observedAttributes() { return ["icon"]; }
+    set icon(v) { this.setAttribute("icon", v); }
+    get icon() { return this.getAttribute("icon"); }
+    connectedCallback() {
+      if (!this.shadowRoot) {
+        const r = this.attachShadow({ mode: "open" });
+        r.innerHTML = `<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@mdi/font@7.4.47/css/materialdesignicons.min.css">
+          <style>:host{display:inline-flex;width:var(--mdc-icon-size,24px);height:var(--mdc-icon-size,24px)} i{font-size:var(--mdc-icon-size,24px);line-height:1;display:block}</style><i></i>`;
+      }
+      this.attributeChangedCallback();
+    }
+    attributeChangedCallback() {
+      const i = this.shadowRoot?.querySelector("i"); if (!i) return;
+      i.className = "mdi mdi-" + (this.getAttribute("icon") || "").replace(/^mdi:/, "");
+    }
+  });
+
+  const fakeHass = {
+    callWS: async (msg) => {
+      const r = await fetch("/api/ws", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(msg) });
+      const j = await r.json();
+      if (j.error) throw Object.assign(new Error(j.error.message), j.error);
+      return j.result;
+    },
+    localize: (k) => k,
+  };
+</script>
+<script type="module">
+  import "../brother-ptouch-panel.js";
+  const el = document.createElement("brother-ptouch-panel");
+  el.narrow = q.get("narrow") === "1";
+  el.panel = { config: {} };
+  document.body.append(el);
+  el.hass = fakeHass;
+  window.panelEl = el;
+</script>
+</body>
+</html>
