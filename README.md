@@ -44,7 +44,7 @@ A systemd unit is in `bridge/ptouch-bridge.service`. In HA choose *Bridge* and e
 Always set a token; the bridge will print for anyone who can reach it.
 
 ## Install (HACS)
-1. HACS → ⋮ → **Custom repositories** → add `https://github.com/9112003040/haos-labelprinter`, type **Integration**.
+1. HACS → ⋮ → **Custom repositories** → add `https://github.com/thatgoodpickle/haos-labelprinter`, type **Integration**.
 2. Download **Brother P-touch (PT-P710BT)**, then **restart Home Assistant**.
 3. *Settings → Devices & services → Add integration → Brother P-touch*, and choose USB, Bluetooth or Bridge
    (see "Three ways to connect"). A USB-attached printer is also auto-discovered.

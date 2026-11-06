@@ -1,10 +1,10 @@
 {
   "domain": "brother_ptouch",
   "name": "Brother P-touch (PT-P710BT)",
-  "codeowners": ["@9112003040"],
+  "codeowners": ["@thatgoodpickle"],
   "config_flow": true,
-  "documentation": "https://github.com/9112003040/haos-labelprinter",
-  "issue_tracker": "https://github.com/9112003040/haos-labelprinter/issues",
+  "documentation": "https://github.com/thatgoodpickle/haos-labelprinter",
+  "issue_tracker": "https://github.com/thatgoodpickle/haos-labelprinter/issues",
   "integration_type": "device",
   "iot_class": "local_polling",
   "dependencies": ["http", "frontend", "panel_custom", "websocket_api"],

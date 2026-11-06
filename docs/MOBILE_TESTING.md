@@ -48,7 +48,7 @@ Safari > Develop > your iPhone (Settings > Safari > Advanced > Web Inspector ena
 
 ### Installing the editor branch
 
-The editor branch is `label-editor` of `https://github.com/9112003040/haos-labelprinter` (as named in `manifest.json`).
+The editor branch is `label-editor` of `https://github.com/thatgoodpickle/haos-labelprinter` (as named in `manifest.json`).
 
 * **Manual copy (most reliable).** Check out the branch on a computer, copy
   `custom_components/brother_ptouch/` into `<HA config>/custom_components/brother_ptouch/` (Samba/SSH/File editor
