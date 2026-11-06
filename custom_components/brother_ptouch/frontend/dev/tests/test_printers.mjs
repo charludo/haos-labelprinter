@@ -27,7 +27,7 @@ t("chip: green / amber / red", () => {
   assert.deepEqual([L.chipState([row()], "p1").dot, L.chipState([row()], "p1").status, L.chipState([row()], "p1").name], ["green", "12 mm", "Office"]);
   assert.equal(L.chipState([row({ tape: null, tape_mm: null })], "p1").status, "No tape");
   assert.equal(L.chipState([row({ tape: null, tape_mm: null })], "p1").dot, "amber");
-  const a = L.chipState([row({ online: false, reason: "asleep" })], "p1"); assert.deepEqual([a.dot, a.status], ["amber", "Asleep"]);
+  const a = L.chipState([row({ online: false, reason: "asleep" })], "p1"); assert.deepEqual([a.dot, a.status], ["amber", "Not answering"]);
   assert.equal(L.chipState([row({ online: false, reason: "busy" })], "p1").status, "Busy");
   assert.equal(L.chipState([row({ online: false, reason: "bluetooth_off" })], "p1").status, "Bluetooth off");
   const r = L.chipState([row({ state: "error", message: "Cover open" })], "p1"); assert.deepEqual([r.dot, r.status], ["red", "Cover open"]);

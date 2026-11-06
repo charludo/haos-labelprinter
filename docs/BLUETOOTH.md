@@ -18,7 +18,7 @@ missing) or HTTP 403 / bot-protection pages, so most of this is UNVERIFIED.
 | Power off | Hold the power button until the LED goes out. | Snippet only. |
 | Auto power-off / sleep timing | Not found. Brother's PT-P710BT FAQ list has an entry about reconnecting after the Bluetooth connection is cut off, but the answer text could not be fetched. | UNVERIFIED. The printer's own settings may include an auto power-off option (set with the P-touch Editor/Printer Setting Tool on the PC); not confirmed here. |
 | Bluetooth on/off setting | Brother documents an on/off Bluetooth menu for the E-series labellers (PT-E310BT/E560BT, a different line). For the PT-P710BT it was not found. | UNVERIFIED for this model. |
-| Waking the printer over Bluetooth | Whether a sleeping or powered-off printer can be woken by a Bluetooth connect attempt is **being measured in a separate experiment**. Nothing in this repo assumes it can. Until measured, assume the user must press the power button. | Open |
+| Waking the printer over Bluetooth | **Not possible.** The owner confirmed on a real PT-P710BT that a switched-off printer cannot be woken from software; the power button on the printer must be pressed. Measured on the same unit: while the printer stays switched on, the Bluetooth link answered normally after 5, 10 and 20 minutes idle (1.8 to 2.6 s per connect), so the earlier 'asleep' failures were the printer powering itself off, not Bluetooth sleeping. The Connect button therefore retries for the configured time (which lets the user press the button) and explains. | Verified |
 
 Pages tried: brother.co.za / brother.co.uk / brother.com.au PT-P710BT FAQ pages (titles only),
 manualmachine.com (403), manualshive.com (bot protection).

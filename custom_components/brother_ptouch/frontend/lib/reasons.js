@@ -23,7 +23,7 @@ export const REASON_TEXT = {
 
 /** 1-2 word status for the top-bar chip and list rows. */
 export const REASON_SHORT = {
-  asleep: "Asleep", busy: "Busy", not_paired: "Not paired", bluetooth_off: "Bluetooth off",
+  asleep: "Not answering", busy: "Busy", not_paired: "Not paired", bluetooth_off: "Bluetooth off",
   no_dbus: "No Bluetooth", no_adapter: "No Bluetooth", no_library: "No Bluetooth",
   pairing_failed: "Pairing failed", pairing_timeout: "Pairing timed out", not_found: "Not found", permission: "No permission", error: "Error",
 };

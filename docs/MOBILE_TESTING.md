@@ -5,18 +5,36 @@ The editor (`custom_components/brother_ptouch/frontend/`) was developed with emu
 on the dev machine (missing system libraries), and nothing has been tried inside the real Companion app yet.
 This file tells you how to do that, and what to look for.
 
-## What changed for touch (short)
+## How the phone UI works (screens narrower than 900 px, or HA `narrow`)
 
-* One finger on an element drags it, handles resize it (hit boxes are 44 css px; on tiny elements they sit
-  outside the box so the body stays draggable). One finger on the empty canvas pans, two fingers pinch-zoom and pan.
-  Double tap or long press (about 0.5 s) on an element opens its properties and focuses the text field.
-* Phone layout (panel narrower than 900 px): compact top bar (menu, name, Save, Print, three-dot menu with tape,
-  length, printer, copies, New design), zoom and undo/redo strip, action bar with **Add**, Edit, Rotate,
-  Duplicate, Forward, Backward, Delete, properties as a bottom sheet (side panel in landscape), bottom tab bar.
-* Rotation is in 90 degree steps only (the design format has no free rotation), via the Rotate button.
-* All confirmations are in-app dialogs (no `window.confirm`). Inputs are 16 px (no iOS focus zoom).
-* Keyboard: when a text field is focused on a phone the tab bar, action bar and zoom strip hide so the sheet and the
-  field stay visible (`visualViewport` based).
+The panel no longer squeezes the desktop three-pane editor onto a phone. On a narrow screen it is a small app with two screens:
+
+* **Home** (opens first): top bar with the HA menu button (fires `hass-toggle-menu`), the title "Labels" and the printer chip
+  (opens the printer drawer). A status card appears only when the printer needs attention (offline with the reason and a
+  **Connect** button, no tape, error, or "Set up your printer" when none exists). Two big buttons, **New label** and
+  **From template**, then **Your labels**: one card per saved design with a live preview thumbnail (loaded lazily, 3 at a time,
+  cached per design and tape), the name, a three-dot menu (Open, Duplicate, Delete with an in-app confirmation) and a friendly empty state.
+* **Editor** (tap New, a template or a saved label): back arrow (asks Save / Discard / Keep editing when there are unsaved
+  changes), the label name (tap to rename), undo/redo, **Print**, and a three-dot menu (Save, tape and length, fit, template, delete).
+  Below it a strip with the tape/length chip (opens "Label settings": tape, length, padding, variables), a **Save** chip while
+  there are unsaved changes, and a Fit/zoom chip. The canvas fits the label width by default (pinch to zoom, drag to pan, long
+  labels scroll sideways) and takes all the remaining height. Tapping empty canvas deselects.
+* **Bottom toolbar**: nothing selected = Text, Icon, QR code, Barcode, More; element selected = Edit, Copy, Rotate, Raise, Lower, Delete.
+  Adding an element or tapping **Edit** (or double tap / long press on the element) opens the **properties bottom sheet** with three
+  snap points (peek, half, full: drag the handle or the header, or tap the handle). The canvas area shrinks and scrolls so the
+  selected element always stays visible above the sheet. **Done** closes it. In landscape the sheet is a side panel.
+* **Print** opens a small sheet: preview, printer, tape check, copies stepper and a big Print button, then the waiting / failed
+  (Try again, Printers) / sent states.
+* **Back button**: the editor, the properties sheet and every sheet or dialog (gallery, printers, wizard, print, menus, confirmations)
+  push a history entry (`history.pushState`, same URL), so the Android Back button / browser back / iOS edge swipe closes the topmost
+  one first, then leaves the editor for Home, then leaves the panel as usual. A reload while editing restores the open label
+  (id and unsaved draft are kept in `sessionStorage`).
+* **Host awareness**: the panel is `height:100%` of the HA host, uses no `100vh` and no `position:fixed`, and does **not** add safe-area
+  padding: HA's `ha-panel-custom` already pads the panel host (the panel is registered with `handle_safe_area` false, the default).
+  Overlays are `position:absolute` inside the panel, there is one scroll container per screen. When the soft keyboard is up
+  (`visualViewport`) the panel shrinks to the visible area, secondary bars hide and the sheet uses all remaining height.
+* Inputs are 16 px, other text at least 14 px, touch targets at least 44 px. Rotation is in 90 degree steps only.
+* Desktop (900 px and wider) is unchanged: three panes, no history entries.
 
 ## (a) Dev harness on a phone over the LAN
 
@@ -89,50 +107,65 @@ may keep the old copy. Note that the imported `lib/*.js` files do **not** carry 
   in iOS Safari instead (same engine, but no Companion chrome), or use a TestFlight/beta build and check there.
   Fallback for field diagnosis: the panel shows server errors inline; browser console errors are not visible without inspection.
 
-## (c) Manual checklist
+## (c) Manual checklist (phone, portrait first, then landscape)
 
-Use a 360-430 px wide phone in portrait first. Expected results in parentheses.
+Use a 360-430 px wide phone. Expected results in parentheses. Steps marked (rig) were also run in the real-HA rig (see the end).
 
-1. Open Labels from the sidebar. (Panel fills the screen, no page horizontal scroll, top bar on one row.)
-2. Tap the menu icon at top left. (HA sidebar opens. In wide/tablet layout the icon is absent: HA shows its own.)
-3. Tap **Add** > **Text**. (Bottom sheet with a 4-column grid, tiles at least 44 px; element appears and is selected; canvas scrolls to it.)
-4. Drag the element with one finger. (It follows the finger, snapping guides show, page does not scroll, no pull-to-refresh, no text selection or magnifier.)
-5. Drag it towards the right screen edge on a long label. (Canvas auto-scrolls.)
-6. Drag a corner handle. (Element resizes; handle is easy to hit; the preview image updates a moment after release.)
-7. Add a 2 px **Line**, then try to move it and to resize it. (Hit area is bigger than the line; handles sit outside it.)
-8. Tap the rotate button on the action bar. (Rotates by 90 degrees each tap.)
-9. Tap Duplicate, then Delete, then Undo and Redo in the strip at the top. (Each works without a keyboard.)
-10. Pinch outwards with two fingers on the canvas. (Zooms continuously around the fingers, page itself does not zoom.)
-11. Pan with two fingers while pinching, then with one finger on empty canvas. (Scrolls, with momentum.)
-12. Tap the zoom percentage chip. (Returns to the default zoom, 200% or more on a phone.)
-13. Build a label longer than the screen. (Horizontal scrolling works; elements near the end are reachable.)
-14. Double tap a text element. (Properties sheet opens, text field focused, soft keyboard appears.)
-15. Long press a text element for about half a second. (Same as double tap; no OS context menu or text selection.)
-16. While the keyboard is open, type text. (Field stays visible above the keyboard; tab bar and action bar are hidden; label preview still partly visible; after closing the keyboard the layout returns.)
-17. Focus any input. (No page zoom on iOS, since fonts are 16 px.)
-18. Tap Properties in the tab bar, change font via the picker, search a font. (List scrolls inside the sheet; sheet does not hide the selected element: canvas scrolls it into view; the arrow button makes the sheet taller/shorter.)
-19. Select an icon element and pick an icon. (Grid cells are at least 44 px; icons render.)
-20. Add **Image**. (OS offers camera and photo/file picker; chosen image is scaled to the tape height and previewed.)
-21. Open the three-dot menu. (Tape, length, printer (if more than one), copies, New design, Reset zoom; all selects open the native picker.)
-22. Tap New design with unsaved changes. (In-app "Discard unsaved changes?" dialog, red Discard button; no browser alert.)
-23. Print with a mismatching tape. (In-app confirmation; then a "Sent to printer" message.)
-24. Switch Labels tab, open a saved design, delete one. (Delete asks in-app; list buttons are 44 px.)
-25. Rotate the phone to landscape. (Tab bar becomes a left rail, properties open as a right-hand panel, nothing cut off by the notch.)
-26. Switch HA to a dark theme and back. (Colours follow HA variables; handles and text stay legible.)
-27. Check the bottom of the screen on a phone with a gesture bar. (Tab bar is not under the system bar; UNVERIFIED whether HA already pads the safe area, so look for a double gap or a clipped bar.)
-28. On a tablet (768-1024 px) in portrait and landscape. (Portrait uses the phone layout; landscape at 900 px and wider uses the three-pane desktop layout.)
-29. Leave the panel open for a few minutes while editing. (No lag when dragging; preview requests are debounced to 250 ms/800 ms max on touch devices.)
-30. Swipe down from the top on the empty canvas (Android). (Canvas does not trigger the app's pull-to-refresh. UNVERIFIED: native SwipeRefreshLayout may still fire; if so report it.)
+1. Open Labels from the sidebar. (Opens on Home, not the editor; no horizontal page scroll; top bar starts at the very top of the panel with no dead band above it.) (rig)
+2. Tap the menu icon at top left. (HA sidebar opens. In wide/tablet layout the icon is absent.) (rig: event fires)
+3. Look at Home with no saved labels. (Friendly empty state; New label and From template buttons; printer chip with a coloured dot.)
+4. Switch the printer off or make it unreachable and reload. (Amber status card: "... is offline", the reason, **Connect** and **Printers**; Connect shows progress and the outcome.)
+5. With no printer configured. (Card "Set up your printer" opens the wizard.)
+6. Tap **New label**. (Editor opens, canvas fits the width and fills the height, toolbar shows Text / Icon / QR code / Barcode / More.) (rig)
+7. Tap **Text**. (Element appears selected, the properties sheet opens at the peek height with the text box visible; the element is not covered.) (rig)
+8. Drag the sheet handle up and down, flick it, tap the handle. (Snaps to peek / half / full; fast flick down closes it; Done closes it.) (rig)
+9. Type in the text box. (Keyboard opens; sheet stays above it with fields reachable; top strip and toolbar are hidden meanwhile; layout returns after closing the keyboard.) (rig: keyboard simulated by shrinking the viewport)
+10. Scroll the sheet to the end at half height. (Font, weight, size, alignment, position fields all reachable; checkboxes are easy to hit.)
+11. Tap **Done**. (Toolbar changes to Edit / Copy / Rotate / Raise / Lower / Delete.) (rig)
+12. Tap empty canvas. (Selection clears; Add buttons are back.) (rig)
+13. Drag the element, drag a corner handle (all handles are fully on screen), add a thin Line and move it. (Works; page does not scroll or refresh.)
+14. Pinch with two fingers, pan with one on empty canvas, tap the zoom chip. (Zooms around the fingers, returns to Fit.)
+15. Build a label longer than the screen. (Scrolls sideways; elements near the end are reachable; Fit shows the whole label.)
+16. Tap the tape chip. ("Label settings" sheet: tape, length, padding, variables.)
+17. Tap the name at the top, rename, press Enter. (Inline edit; no zoom on iOS.)
+18. Add Icon, QR code, Barcode and Image (More). (Pickers are scrollable inside the sheet; Image offers camera and gallery.)
+19. Rotate, Copy, Raise, Lower, Delete, Undo, Redo. (Each works; disabled states are visible.)
+20. Tap **Print**. (Sheet with preview, printer, tape check, copies stepper; with a mismatching tape it says so and the button reads "Print anyway".) (rig)
+21. Print. (Waiting state with Stop waiting; then "Sent to the printer" and Done; a failure shows Try again and Printers.) (rig: success)
+22. Back button / swipe back: with the print sheet open, then with the properties sheet open, then in the editor. (Each press closes one level; in the editor with changes the Save / Discard / Keep editing dialog appears; finally you are on Home, one more Back leaves the panel.) (harness and rig)
+23. Edit, reload the page. (The same label is open again with its unsaved changes.) (harness)
+24. On Home tap the three dots of a card. (Open / Duplicate / Delete; Delete asks in-app.) (rig)
+25. Tap the printer chip. (Full-screen printer sheet; Back closes it.) (rig)
+26. Tap **From template**. (Full-screen gallery, category chips fade at the edge where more exist; picking one opens the editor with the variables sheet at half height.) (rig)
+27. Rotate to landscape. (Compact bars, sheet is a side panel with a visible Done even with the keyboard open, nothing clipped by the notch.) (rig)
+28. Switch HA to a dark theme and back. (Colours follow HA variables.) (rig)
+29. iPhone with a notch / home indicator and an Android gesture bar. (No double inset: one gap at most, from HA itself; toolbar not under the home indicator.)
+30. Tablet 768-1024 px. (Portrait uses the phone screens, 900 px and wider uses the desktop three-pane editor.)
+31. Swipe down from the top on the canvas (Android). (No pull-to-refresh; UNVERIFIED in the Companion app.)
 
 ## Template gallery ("From template")
 
-Entry points: the **From template** button under Designs (desktop and the phone Labels tab), the three-dot menu on phones, and the
-"Start from a template" button on an empty canvas. It opens a centred dialog (desktop) or a full-screen sheet (phone) with search,
+Entry points: the **From template** button under Designs (desktop), the big **From template** button on the phone Home screen, "Start from a template" in the editor menu, and the
+"Start from a template" button on an empty desktop canvas. It opens a centred dialog (desktop) or a full-screen sheet (phone) with search,
 category chips and a card grid. Thumbnails are built + rendered by the server at the current tape, lazily as cards scroll into view
 (max 3 requests at once, cached in memory per tape). Templates that do not support the current tape are greyed out and say which tape they need.
-Choosing one opens a new unsaved design (dirty, named after the template); on phones the properties sheet opens scrolled to the Variables.
+Choosing one opens a new unsaved design (dirty, named after the template); on phones the editor opens with the Label settings sheet (variables) at half height.
 If the current design has unsaved changes the in-app "Discard" dialog appears first (Cancel returns to the gallery).
 Phone checks: all targets 44 px, no horizontal scroll, bottom of the grid clears the gesture bar, close button clears the notch, Esc/Enter work with a hardware keyboard.
+
+## Real Home Assistant rig and README screenshots
+
+`tools/ha-rig/` (see its README) runs a real HA with this integration and a fake bridge printer on 127.0.0.1; it never loads HA's Bluetooth.
+
+    UI_VENV=<venv with playwright>
+    # one-shot: start HA, drive the phone flows at 390x844 / 412x915 / 360x640, portrait+landscape, light+dark, stop HA
+    HA_RIG_DIR=/tmp/rigcfg $UI_VENV/bin/python tools/ha-rig/run.py --shots /tmp/shots
+    # iterate: keep HA running (frontend edits load on reload)
+    HA_RIG_DIR=/tmp/rigcfg .venv-ha/bin/python tools/ha-rig/serve.py &   # then:  run.py --shots out --attach ;  kill $(cat /tmp/rigcfg/serve.pid)
+
+README phone screenshots (dev harness, mock backend): start `dev/mock_backend.py --port 8765`, then
+`$UI_VENV/bin/python custom_components/brother_ptouch/frontend/dev/phone_shots.py docs/images` (writes phone-home / phone-editor / phone-sheet / phone-print .png).
+Harness switches for the home states: `?printers=0` (set up your printer card), `_mock/printer` with `online:false` (offline card).
 
 ## Known limitations / not verified without a device
 
@@ -142,7 +175,7 @@ Phone checks: all targets 44 px, no horizontal scroll, bottom of the grid clears
 * Compatibility was reviewed against iOS 15 / WebView 100 by code reading: `color-mix()` is only used inside `@supports`
   with plain fallbacks, `:has()`, container queries, `Array.at` and `replaceAll` are not used, `dvh` is not used. `:focus-visible`
   rules are dropped silently on iOS older than 15.4.
-* Whether HA already applies `env(safe-area-inset-*)` to custom panels is unknown; the panel adds its own padding.
+* Safe areas: HA pads the panel host itself, the panel adds nothing (verified in the real-HA rig with emulated insets; the Companion apps were not run).
 * Pull-to-refresh and edge swipes handled natively by the Companion app cannot be suppressed from web content with certainty.
 * Real-device performance (preview debounce values, pinch smoothness) is untested.
 * Free rotation, multi-select and on-canvas text editing are not implemented.

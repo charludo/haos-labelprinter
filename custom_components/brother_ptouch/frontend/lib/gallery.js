@@ -21,6 +21,9 @@ export function createGallery({ api, t, getTape, onPick, onClose }) {
     onInput: () => { state.query = search.value; render(); } });
   const chips = h("div", { class: "gal-chips", role: "toolbar", "aria-label": t("Categories") });
   const grid = h("div", { class: "gal-grid", role: "list" });
+  // fade cue: the category chips scroll sideways; show a fade on the side that has more
+  const chipFade = () => { const m = chips.scrollWidth - chips.clientWidth; chips.classList.toggle("more-r", m > 4 && chips.scrollLeft < m - 4); chips.classList.toggle("more-l", chips.scrollLeft > 4); };
+  chips.addEventListener("scroll", chipFade, { passive: true });
   const status = h("div", { class: "gal-status", role: "status" });
   const banner = h("div", { class: "gal-banner", role: "alert", hidden: true });
   const scroller = h("div", { class: "gal-scroll" }, banner, grid, status);
@@ -87,6 +90,7 @@ export function createGallery({ api, t, getTape, onPick, onClose }) {
         onClick: () => { state.category = value; render(); } }, label);
       chips.replaceChildren(chip("", t("All")), ...cats.map((c) => chip(c, c)));
     }
+    requestAnimationFrame(chipFade);
     for (const b of chips.children) { const on = b.dataset.cat === state.category; b.classList.toggle("on", on); b.setAttribute("aria-pressed", String(on)); }
   }
 

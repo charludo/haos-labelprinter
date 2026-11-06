@@ -1,127 +1,157 @@
-# Brother P-touch (PT-P710BT) for Home Assistant
+<p align="center"><img src="docs/images/logo-wordmark.png" alt="Brother P-touch for Home Assistant" width="420"></p>
 
-Print labels from automations, scripts and dashboards on a Brother **PT-P710BT**
-(also PT-P700 / PT-P750W, same raster protocol).
+<p align="center"><b>Design and print tape labels from Home Assistant, on your Brother P-touch.</b></p>
 
-> **Status: 0.1.0.** Verified on a real PT-P710BT over USB, Bluetooth (direct) and the bridge
-> (Bluetooth): status, text printing and orientation. The Home Assistant layer is covered by tests
-> against a fake printer; not yet run inside a live Home Assistant.
+<p align="center">
+<a href="https://hacs.xyz/docs/faq/custom_repositories"><img alt="HACS custom repository" src="https://img.shields.io/badge/HACS-Custom%20repository-orange.svg"></a>
+<a href="https://github.com/thatgoodpickle/haos-labelprinter/releases"><img alt="Latest release" src="https://img.shields.io/github/v/release/thatgoodpickle/haos-labelprinter?include_prereleases"></a>
+<a href="LICENSE"><img alt="MIT licence" src="https://img.shields.io/badge/licence-MIT-blue.svg"></a>
+</p>
 
-## Three ways to connect
+<p align="center"><img src="docs/images/editor-dark.png" alt="The label editor inside Home Assistant" width="800"></p>
 
-| Mode | Use when | Needs |
+## What you can do
+
+- **Design labels in Home Assistant.** A **Labels** page in the sidebar lets you drag and drop text, icons, QR codes, barcodes, shapes and pictures. The preview is what prints.
+- **Start from a template.** 35 ready-made labels: spice jars, freezer food, cables, breakers, Wi-Fi QR codes, battery dates and more.
+- **Print from automations.** Print a label when something happens, with live values such as a date or a sensor reading.
+- **Use it on your phone.** The editor works with touch.
+- **Save tape.** Labels sent close together print as one strip with one cut.
+
+## Does it work with my printer?
+
+Short answer: it is **verified on the PT-P710BT only**. Other models might work, but nobody has confirmed it yet.
+
+| Printer | Status | Notes |
 |---|---|---|
-| **USB** | Printer is plugged into the HA host | `libusb-1.0` on the host; `/dev/bus/usb` visible to HA (udev permissions) |
-| **Bluetooth** | HA host has a BT adapter and BlueZ | Printer paired with the host. Enter its MAC (RFCOMM socket) or a device path (`/dev/rfcomm0`, `/dev/usb/lp0`) |
-| **Bridge** | Printer is far from HA, or HA OS can't reach it | `bridge/ptouch_bridge.py` on any Linux box (Pi, PC) next to the printer |
+| **PT-P710BT** | Verified by the maintainer | USB, Bluetooth and network bridge |
+| **PT-P700** | Should work, untested | The code recognises its USB ID |
+| **PT-P750W** | Should work, untested | The code recognises its USB ID |
+| Other Brother P-touch (PT-E, PT-H, PT-P9xx) | Unknown, please test and report | Not promised to work |
 
-> The PT-P710BT speaks **Bluetooth Classic (RFCOMM)**, not BLE, so Home Assistant's BLE stack and
-> ESPHome Bluetooth proxies can't carry it. Instead the integration uses what HA already has on the host:
-> BlueZ over the system D-Bus (`dbus-fast`, which HA ships) and its `Profile1` API to open the serial link,
-> so no raw sockets are needed. If D-Bus isn't reachable it falls back to a raw RFCOMM socket. If neither
-> works (e.g. no Bluetooth on the HA machine) use the bridge on another machine. Pairing is still done once
-> on the host with `bluetoothctl` (HA has no UI for pairing Classic devices).
+Brother **QL** printers (the shipping and address label printers) are a different product line. They are **not supported**.
 
-### Bluetooth pairing (host or bridge machine)
-```
-bluetoothctl
-  scan on          # printer shows as PT-P710BT####
-  pair  AA:BB:CC:DD:EE:FF
-  trust AA:BB:CC:DD:EE:FF
-```
-Only one device can hold the RFCOMM link: disconnect your phone's P-touch app first. Channel is 1
-on the models we know of (`sdptool browse AA:BB:...` to check).
+What the statuses mean, and the full list: [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md).
 
-### Bridge
-```
-python3 bridge/ptouch_bridge.py --usb --token SECRET                    # USB
-python3 bridge/ptouch_bridge.py --bluetooth AA:BB:CC:DD:EE:FF --token SECRET
-python3 bridge/ptouch_bridge.py --device /dev/usb/lp0 --token SECRET
-```
-Docker (from repo root): `docker build -f bridge/Dockerfile -t ptouch-bridge .` then
-`docker run -d --restart unless-stopped --device /dev/bus/usb -p 8765:8765 -e PTOUCH_BRIDGE_TOKEN=SECRET ptouch-bridge --usb`.
-A systemd unit is in `bridge/ptouch-bridge.service`. In HA choose *Bridge* and enter `http://<host>:8765`.
-Always set a token; the bridge will print for anyone who can reach it.
+### Tried it on your printer? Tell us
 
-## Install (HACS)
-1. HACS → ⋮ → **Custom repositories** → add `https://github.com/thatgoodpickle/haos-labelprinter`, type **Integration**.
-2. Download **Brother P-touch (PT-P710BT)**, then **restart Home Assistant**.
-3. *Settings → Devices & services → Add integration → Brother P-touch*, and choose USB, Bluetooth or Bridge
-   (see "Three ways to connect"). A USB-attached printer is also auto-discovered.
-4. A **Labels** entry appears in the sidebar (admins only): that is the label editor.
+Whether it worked or not, we want to know. It takes two minutes, and it is how this list grows.
+**[Fill in the compatibility report](https://github.com/thatgoodpickle/haos-labelprinter/issues/new?template=compatibility-report.yml)**
 
-Manual install: copy `custom_components/brother_ptouch` into `config/custom_components/` and restart.
-After an update, hard-refresh the browser or clear the Companion app's cache so it loads the new editor code.
-Tested with Home Assistant 2026.10.4; older versions are untested.
+## Install in 5 steps
 
-## Label editor (sidebar → Labels)
-Drag-and-drop editor with text (any Google Font), MDI icons, QR codes, barcodes, shapes and images, a gallery of
-35 ready-made templates, `{{ variables }}` and Home Assistant templates such as `{{ states('sensor.x') }}`, and a
-live preview that is exactly what prints. Works on a phone. Fonts and icons are downloaded on first use from
-Google Fonts / jsDelivr and cached on the Home Assistant host (needs internet the first time).
-Print a saved design or a built-in template from an automation:
+1. In Home Assistant open **HACS**. Click the three dots at the top right and choose **Custom repositories**.
+2. Paste `https://github.com/thatgoodpickle/haos-labelprinter`, choose the type **Integration**, and click **Add**.
+3. Find **Brother P-touch** in HACS and click **Download**.
+   *While only pre-releases exist, you must first turn on **Show beta versions** in the HACS download dialog, or the download button will not offer a version.*
+4. **Restart Home Assistant.**
+5. Go to **Settings > Devices & services > Add integration**, search for **Brother P-touch**, and follow the steps.
+
+More detail with every click: [docs/INSTALL.md](docs/INSTALL.md).
+
+## Connect your printer
+
+You have three choices. Pick the one that fits where your printer sits.
+
+- **USB.** Plug the printer into the computer that runs Home Assistant. Home Assistant usually finds it by itself.
+- **Bluetooth.** Home Assistant scans for the printer and pairs it for you, from the setup steps or from the label editor. The Home Assistant computer needs a Bluetooth adapter. Only one device can talk to the printer at a time, so disconnect your phone first.
+- **Network bridge.** A tiny program runs on any Linux computer next to the printer (a Raspberry Pi, for example). Home Assistant talks to it over your network. Use this if the printer is far away or Home Assistant cannot use USB or Bluetooth.
+
+Step-by-step help for each: [docs/INSTALL.md](docs/INSTALL.md).
+
+## Make your first label in 2 minutes
+
+1. Open **Labels** in the Home Assistant sidebar. (It is only shown to admin users.)
+2. Tap **From template** and pick one, for example **Spice jar**. (Or tap **New label** to start from blank.)
+3. Click the text and change it.
+4. Click **Print**.
+
+The first time you use a font or an icon it is downloaded, so the editor needs internet access once.
+
+<p align="center"><img src="docs/images/template-gallery.png" alt="The template gallery" width="600"></p>
+
+## Print from automations
+
+Print a built-in template or one of your saved designs:
 
 ```yaml
 action: brother_ptouch.print_template
 data:
-  template: freezer-date        # a saved design (id or name) or a built-in template id
+  template: freezer-date
   variables:
     name: Chili con carne
     portions: "4"
     date: "{{ now().strftime('%Y-%m-%d') }}"
 ```
-See `docs/` for the templates list, Brother-app comparison and the mobile test checklist.
 
-## Entities
-`sensor`: status (idle/printing/error), tape width, tape type, tape colour, text colour.
-`binary_sensor`: problem (with `errors` attribute), tape loaded. Status is polled every 60 s.
-
-## Services
-All take an optional `device_id` (only needed with several printers), `copies`, `auto_cut`, `margin_mm`.
-Labels are sized automatically to whatever tape is loaded.
+Print some text:
 
 ```yaml
 action: brother_ptouch.print_text
 data:
-  text: "Kitchen\nSpices"      # multiple lines auto-fit the tape height
+  text: "Kitchen\nSpices"
+  copies: 2
+```
+
+Print a QR code with a caption:
+
+```yaml
 action: brother_ptouch.print_qr
 data:
   data: "https://home.example.com/box/42"
   text: "Box 42"
-action: brother_ptouch.print_image
-data:
-  image_path: /config/www/logo.png    # must be in allowlist_external_dirs; or image_url
-  dither: false
 ```
 
-Example: print a label when a shopping-list item is added, a door is left open, etc. just call the service
-from any automation; `text` supports templates.
+There is also `brother_ptouch.print_image` for pictures. If you have several printers, add `device_id`. All fields are listed in Developer tools > Actions. The labels fit the tape that is loaded.
 
-## Saving tape
-A P-touch wastes ~25 mm of blank tape (head-to-cutter distance) at the start of every job, and it can't
-be avoided or "held" across jobs: the printer finishes and cuts the previous label as soon as a new job starts.
-So the integration merges print requests that arrive within a few seconds of each other into **one job**:
-one leader, no cut between labels, one cut at the end. Set the window under **Configure** ("Strip window",
-default 3 s, 0 = off). Use `cut_each: true` on a service call if you want a cut after every label, or
-`copies:` for several of the same label.
+## Screenshots
 
-## Calibrating orientation (do this once)
-Print `brother_ptouch.print_text` with `text: "ABC"`. On the PT-P710BT the default (*Normal*) is correct. If a
-different unit prints mirrored or upside down, open **Configure** and pick one of the flip options.
+<p align="center">
+<img src="docs/images/editor-light.png" alt="The label editor, light theme" width="420">
+<img src="docs/images/phone-home.png" alt="The Labels home screen on a phone" width="150">
+<img src="docs/images/phone-editor.png" alt="Editing a label on a phone" width="150">
+</p>
+<p align="center">
+<img src="docs/images/printer-wizard.png" alt="Setting up a printer" width="300">
+<img src="docs/images/printer-drawer.png" alt="The printer drawer in the editor" width="300">
+<img src="docs/images/template-sheet.png" alt="A few of the 35 ready-made templates" width="300">
+</p>
 
-## Things to know / verify on hardware
-* The printer must be on **tape (TZe)** with a cassette in; the cover closed.
-* USB ID `04F9:20AF` is confirmed for the PT-P710BT. PT-P700 (`2061`) and PT-P750W (`2062`) are also matched but untested.
-* **Never send the printer a print command without page data** (e.g. a bare `0x1A`): it faults into a
-  flashing-red state until power-cycled. Status polling deliberately sends no `ESC @` (initialize).
-* Printable pins per tape follow Brother's PT-P700 raster reference (9 mm = 50 pins, 39 margin, etc.).
+## Troubleshooting
 
-## Development
-```
-python -m venv .venv    && .venv/bin/pip install pillow pytest segno pyusb
-.venv/bin/python -m pytest tests/test_core.py            # protocol, renderer, bridge
-python -m venv .venv-ha && .venv-ha/bin/pip install pytest-homeassistant-custom-component pyusb segno
-PYTHONPATH=. .venv-ha/bin/python -m pytest tests/test_ha.py   # HA integration
-```
-The protocol core (`custom_components/brother_ptouch/ptouch/`) has no HA imports and is shared by the
-integration and the bridge.
+- **I do not see Labels in the sidebar.** Restart Home Assistant after installing. Only admin users see it. Then hard-refresh the browser (Ctrl+Shift+R).
+- **The printer is not answering.** The printer switches itself off after a while, and **it cannot be woken from Home Assistant: you have to press the power button on the printer.** Then press **Connect** (or just print again). If it is already on, disconnect any phone from it and move it closer. **Connect** tells you what went wrong.
+- **Fonts or icons are missing.** They are downloaded from Google Fonts and jsDelivr the first time you use them. Check that Home Assistant has internet access.
+- **Bluetooth does not connect.** The printer talks to one device at a time. Close the Brother app on your phone and turn off its Bluetooth for the printer.
+- **I updated and the editor looks old.** Restart Home Assistant, then hard-refresh the browser. In the Companion app, clear the app cache.
+- **The label is mirrored or upside down.** Open the integration, click **Configure**, and change the orientation.
+
+## Status and known limits
+
+This is early software. Here is what has and has not been checked.
+
+**Checked on a real PT-P710BT:** USB, Bluetooth (through the computer's own Bluetooth) and the network bridge; printing text, QR codes, icons and templates; tape detection; strips of several labels as one piece. The editor was also checked in a simulated browser on desktop and touch, with demo data. Automated tests with fake printers pass.
+
+**Not checked yet:**
+- Running inside a live Home Assistant. This is the next test.
+- The Home Assistant Companion app, and iOS.
+- Pairing a real printer with the new pairing tool.
+- Any printer other than the PT-P710BT.
+- Home Assistant versions other than 2026.10.4.
+
+Other limits: the label editor is for admin users. Brother tape (TZe) must be loaded. You need internet once for fonts and icons.
+
+## Not affiliated with Brother
+
+This is an independent, community project. It is not made, endorsed or supported by Brother Industries. Brother and P-touch are trademarks of their respective owners.
+
+## More
+
+- [Install and setup guide](docs/INSTALL.md)
+- [Printer compatibility](docs/COMPATIBILITY.md)
+- [Technical notes for developers](docs/TECHNICAL.md)
+- [Changelog](CHANGELOG.md)
+- Questions: [GitHub Discussions](https://github.com/thatgoodpickle/haos-labelprinter/discussions). Bugs: [open an issue](https://github.com/thatgoodpickle/haos-labelprinter/issues/new/choose).
+- Want to help? See "Contributing" in [docs/TECHNICAL.md](docs/TECHNICAL.md#contributing).
+
+Licence: [MIT](LICENSE).

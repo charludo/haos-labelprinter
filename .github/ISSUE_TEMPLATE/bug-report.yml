@@ -1,0 +1,63 @@
+name: Bug report
+description: Something does not work as it should.
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened?
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: input
+    id: printer
+    attributes:
+      label: Printer model and connection
+      description: For example PT-P710BT over Bluetooth.
+    validations:
+      required: true
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version and install type
+    validations:
+      required: true
+  - type: input
+    id: integration_version
+    attributes:
+      label: Integration version
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser or app (if it is about the editor)
+      description: For example Chrome on Windows, or the Companion app on Android.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Settings > System > Logs. Remove passwords, tokens and other secrets.
+      render: text
+  - type: checkboxes
+    id: secrets
+    attributes:
+      label: Privacy check
+      options:
+        - label: I checked there is no secret in what I pasted.
+          required: true

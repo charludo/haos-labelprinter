@@ -5,6 +5,9 @@ import * as G from "./lib/geometry.js";
 import { h, icon, iconButton, storage } from "./lib/ui.js";
 import { createFontPicker, createIconPicker, fontInfo, nearestWeight, ALL_WEIGHTS } from "./lib/pickers.js";
 import { CSS } from "./lib/styles.js";
+import { MOBILE_CSS } from "./lib/styles_mobile.js";
+import { createMobile } from "./lib/mobile_ui.js";
+import * as M from "./lib/mobile.js";
 import { createGallery } from "./lib/gallery.js";
 import { createPrinterDrawer, createWizard } from "./lib/printer_ui.js";
 import * as PL from "./lib/printer_logic.js";
@@ -16,7 +19,10 @@ const TYPE_NAMES = { text: "Text", icon: "Icon", qr: "QR code", barcode: "Barcod
 const ZOOMS = [0.5, 1, 2, 3, 4, 5, 6];
 const ECC = ["l", "m", "q", "h"];
 const BARCODES = ["code128", "code39", "ean13", "ean8", "upca", "itf", "codabar"];
-const NARROW_PX = 900;
+const NARROW_PX = M.NARROW_PX;
+const SESSION_KEY = "brother_ptouch.session";
+const ssGet = () => { try { return JSON.parse(sessionStorage.getItem(SESSION_KEY) || "null"); } catch { return null; } };
+const ssSet = (v) => { try { if (v) sessionStorage.setItem(SESSION_KEY, JSON.stringify(v)); else sessionStorage.removeItem(SESSION_KEY); } catch { /* ignore */ } };
 
 class BrotherPtouchPanel extends HTMLElement {
   constructor() {
@@ -27,9 +33,9 @@ class BrotherPtouchPanel extends HTMLElement {
     this.printFlow = PL.newPrintFlow();
     this.s = {
       tapeSel: storage.get("tape", "auto"), entryId: storage.get("entry", ""), copies: 1,
-      zoom: 3, fit: storage.get("zoomMode", "fit") === "fit", printers: [], printersLoaded: false, designs: [],
+      zoom: 3, fit: storage.get("zoomMode", "fit") === "fit", printers: [], printersLoaded: false, designs: [], designsLoaded: false, view: "home", printDone: 0,
       testValues: {}, preview: null, previewUrl: "", error: "", warnings: [],
-      tab: "edit", busy: "", layout: "wide", sheet: false, sheetTall: false,
+      busy: "", layout: "wide",
     };
     this.s.zoom = storage.get("zoom", 3);
     this._coarseMQ = window.matchMedia ? window.matchMedia("(pointer: coarse)") : null;
@@ -56,6 +62,7 @@ class BrotherPtouchPanel extends HTMLElement {
   connectedCallback() {
     this._ro = new ResizeObserver(() => this._applyLayout());
     this._ro.observe(this);
+    this.m?.resetNav();
     this._keyHandler = (e) => this._onKey(e);
     this.addEventListener("keydown", this._keyHandler);
     this._vvHandler = () => this._onViewport();
@@ -69,16 +76,39 @@ class BrotherPtouchPanel extends HTMLElement {
     window.visualViewport?.removeEventListener("resize", this._vvHandler);
     window.visualViewport?.removeEventListener("scroll", this._vvHandler);
     window.removeEventListener("orientationchange", this._vvHandler);
-    this._abortDrag(); cancelAnimationFrame(this._inertiaRaf);
+    this._abortDrag(); cancelAnimationFrame(this._inertiaRaf); clearInterval(this._pTick);
+    this.m?.resetNav();
   }
 
   async _init() {
     this._renderAll();
+    const narrow = this._isNarrow();
+    const plan = narrow ? M.restorePlan(this._historyBp(), ssGet()) : { view: "wide" };
+    if (narrow && plan.fixHistory === "reset") { try { history.replaceState({ ...(history.state || {}), bp: undefined }, ""); } catch { /* ignore */ } }
+    this._renderHome();
     await this._refreshPrinters(true);
     await this._refreshDesigns();
-    const last = storage.get("lastDesign", "");
-    if (last && this.s.designs.some((d) => d.id === last)) await this._open(last, true);
-    else this.previewer.request();
+    if (!narrow) {
+      const last = storage.get("lastDesign", "");
+      if (last && this.s.designs.some((d) => d.id === last)) await this._open(last, true);
+      else this.previewer.request();
+      return;
+    }
+    if (plan.view === "edit") await this._restoreSession(plan);
+  }
+  _historyBp() { try { return history.state?.bp; } catch { return undefined; } }
+  _isNarrow() { const w = this.clientWidth || this.getBoundingClientRect().width || window.innerWidth; return M.isNarrowWidth(w); }
+  async _restoreSession(plan) {
+    const ss = ssGet(); if (!ss) return;
+    try {
+      let d = ss.design;
+      if (!d && ss.id) d = await this.api.getDesign(ss.id);
+      if (!d) return;
+      this.store.load(d, { saved: !ss.dirty });
+      if (plan.fixHistory === "back") { this.m.expectBack(); this.m.enabled = true; try { history.back(); } catch { /* ignore */ } }
+      this.m.enabled = true;
+      this._showEditor({ restore: true });
+    } catch { ssSet(null); }
   }
 
   /** Re-fetch the printer rows (normalised); keeps the active printer if it still exists. */
@@ -97,7 +127,7 @@ class BrotherPtouchPanel extends HTMLElement {
   // ---- shell -----------------------------------------------------------
   _buildShell() {
     const sr = this.shadowRoot;
-    sr.append(h("style", {}, CSS));
+    sr.append(h("style", {}, CSS + MOBILE_CSS));
     this.$ = {};
     const $ = this.$;
 
@@ -124,7 +154,7 @@ class BrotherPtouchPanel extends HTMLElement {
     $.setup = h("button", { class: "btn primary setup-btn", type: "button", "aria-haspopup": "dialog", hidden: true, onClick: () => this._openWizard(false) },
       icon("mdi:printer-settings"), h("span", { class: "lbl" }, t("Set up your printer")), h("span", { class: "lbl-s" }, t("Set up printer")));
     $.printStrip = h("div", { class: "pstrip", hidden: true, "aria-live": "polite" });
-    $.more = iconButton("mdi:dots-vertical", t("More options"), () => this._openLayer("menu"), { class: "ibtn more", "aria-haspopup": "dialog" });
+    $.more = iconButton("mdi:dots-vertical", t("More options"), () => this._openEditorMenu(), { class: "ibtn emore", "aria-haspopup": "dialog" });
     $.copiesWrap = h("div", { class: "tb-group" }, h("label", { class: "small" }, t("Copies")), $.copies);
     $.gTape = h("div", { class: "tb-group" }, $.tape);
     $.gLen = h("div", { class: "tb-group" }, $.lenMode, $.lenMm);
@@ -163,13 +193,11 @@ class BrotherPtouchPanel extends HTMLElement {
     $.tFront = iconButton("mdi:arrow-up-bold-box-outline", t("Bring forward"), () => this._reorderSel(1));
     $.tBack = iconButton("mdi:arrow-down-bold-box-outline", t("Send backward"), () => this._reorderSel(-1));
     $.tDel = iconButton("mdi:delete-outline", t("Delete (Del)"), () => this._delSel());
-    $.tEdit = iconButton("mdi:pencil-outline", t("Edit properties"), () => this._editSel(), { class: "ibtn editbtn" });
-    $.tools = h("div", { class: "tools" }, $.tEdit, $.tRotate, $.tDup, $.tFront, $.tBack, $.tDel);
+    $.tools = h("div", { class: "tools" }, $.tRotate, $.tDup, $.tFront, $.tBack, $.tDel);
     $.readout = h("div", { class: "readout", "aria-live": "off" });
     $.sep = h("span", { class: "sep" });
     $.ctoolbar = h("div", { class: "ctoolbar", role: "toolbar", "aria-label": t("Canvas tools") });
-    $.addBtn = h("button", { class: "btn primary addbtn", type: "button", "aria-haspopup": "dialog", onClick: () => this._openLayer("add") }, icon("mdi:plus"), t("Add"));
-    $.actionbar = h("div", { class: "actionbar", role: "toolbar", "aria-label": t("Element actions") });
+    $.actionbar = h("div", { class: "actionbar" });
     $.warnStrip = h("div", { class: "strip warn", hidden: true, role: "status" });
     $.errStrip = h("div", { class: "strip err", hidden: true, role: "alert" });
     $.msgStrip = h("div", { class: "strip info", hidden: true, role: "status" });
@@ -185,31 +213,16 @@ class BrotherPtouchPanel extends HTMLElement {
     // right pane = inspector (becomes a bottom sheet on phones)
     $.insp = h("div", { class: "section" });
     $.vars = h("div", { class: "section" });
-    $.sheetTitle = h("span", { class: "grow" }, t("Properties"));
-    $.sheetTall = iconButton("mdi:arrow-expand-vertical", t("Taller / shorter"), () => { this.s.sheetTall = !this.s.sheetTall; this._applyLayout(); this._afterSheet(); });
-    $.sheetHead = h("div", { class: "sheet-head" }, $.sheetTitle, $.sheetTall, iconButton("mdi:close", t("Close properties"), () => this._setSheet(false)));
     $.sheetBody = h("div", { class: "sheet-body" }, $.insp, $.vars);
-    $.right = h("aside", { class: "pane right", "aria-label": t("Properties") }, $.sheetHead, $.sheetBody);
-
-    // tabs (phones)
-    const tab = (id, ic, label) => h("button", { type: "button", "data-tab": id, onClick: () => this._tab(id) }, icon(ic), label);
-    $.tabs = h("nav", { class: "tabs", "aria-label": t("Sections") }, tab("designs", "mdi:folder-outline", t("Labels")), tab("edit", "mdi:vector-square", t("Canvas")), tab("props", "mdi:tune", t("Properties")));
+    $.right = h("aside", { class: "pane right", "aria-label": t("Properties") }, $.sheetBody);
 
     // modal layer (phones): add palette, overflow menu, confirm dialog
-    const mrow = (label, ...kids) => h("div", { class: "mrow" }, h("label", {}, label), h("div", {}, ...kids));
-    $.slotTape = h("div"); $.slotLen = h("div"); $.slotCopies = h("div");
-    $.rowTape = mrow(t("Tape"), $.slotTape); $.rowLen = mrow(t("Length"), $.slotLen);
-    $.rowCopies = mrow(t("Copies"), $.slotCopies);
-    $.addSheet = h("div", { class: "msheet add-sheet", role: "dialog", "aria-label": t("Add element") }, h("h3", {}, h("span", { class: "grow" }, t("Add element"))));
-    $.menuSheet = h("div", { class: "msheet menu-sheet", role: "dialog", "aria-label": t("Label options") },
-      h("h3", {}, h("span", { class: "grow" }, t("Label options")), iconButton("mdi:close", t("Close"), () => this._closeLayer())),
-      $.rowTape, $.rowLen, $.rowCopies,
-      h("div", { class: "acts" },
-        h("button", { class: "btn", type: "button", onClick: () => { this._closeLayer(); this._new(); } }, icon("mdi:file-plus-outline"), t("New design")),
-        h("button", { class: "btn", type: "button", onClick: (e) => { const o = $.more; this._closeLayer(); this._openGallery(o); } }, icon("mdi:shape-plus-outline"), t("From template")),
-        h("button", { class: "btn", type: "button", onClick: () => { this._closeLayer(); this._setZoom("fit"); } }, icon("mdi:fit-to-screen-outline"), t("Reset zoom"))));
+    $.addSheet = h("div", { class: "msheet add-sheet", role: "dialog", "aria-label": t("Add element") }, h("h3", {}, h("span", { class: "grow" }, t("Add to label")), iconButton("mdi:close", t("Close"), () => this._closeLayer())));
+    $.menuSheet = h("div", { class: "msheet menu-sheet", role: "dialog" });
     $.dlgText = h("p"); $.dlgOk = h("button", { class: "btn primary", type: "button" }); $.dlgCancel = h("button", { class: "btn", type: "button" }, t("Cancel"));
-    $.dialog = h("div", { class: "dialog", role: "alertdialog", "aria-modal": "true" }, $.dlgText, h("div", { class: "acts" }, $.dlgCancel, $.dlgOk));
+    $.dlgAlt = h("button", { class: "btn", type: "button", hidden: true });
+    $.dialog = h("div", { class: "dialog", role: "alertdialog", "aria-modal": "true" }, $.dlgText, h("div", { class: "acts" }, $.dlgCancel, $.dlgAlt, $.dlgOk));
+    this.m = createMobile(this, t);
     this.gallery = createGallery({ api: { templatesList: () => this.api.templatesList(), buildTemplate: (id, tape) => this.api.buildTemplate(id, tape), preview: (d, o) => this.api.preview(d, o) },
       t, getTape: () => this.tape, onPick: (tpl) => this._newFromTemplate(tpl), onClose: () => this._closeLayer() });
     // the api object is created when hass arrives: components call through this proxy
@@ -219,11 +232,12 @@ class BrotherPtouchPanel extends HTMLElement {
       onClose: () => this._closeLayer(), confirm: (m, o) => this._confirm(m, o) });
     this.wizard = createWizard({ api: lazy, t, getPrinters: () => this.s.printers, refresh: () => this._refreshPrinters(),
       onClose: () => this._closeWizard(), onDone: (id) => this._wizardDone(id) });
-    $.layer = h("div", { class: "layer", hidden: true, onClick: (e) => { if (e.target === $.layer) this._closeLayer(); } }, $.addSheet, $.menuSheet, this.gallery.el, this.printerDrawer.el, this.wizard.el, $.dialog);
+    $.layer = h("div", { class: "layer", hidden: true, onClick: (e) => { if (e.target === $.layer) this._closeLayer(); } }, $.addSheet, $.menuSheet, this.m.printSheet, this.gallery.el, this.printerDrawer.el, this.wizard.el, $.dialog);
 
     $.body = h("div", { class: "body" }, $.left, $.center, $.right);
-    $.root = h("div", { class: "root", "data-tab": "edit" }, $.topbar, $.pbar, $.printStrip, $.body, $.tabs, $.layer, $.file);
+    $.root = h("div", { class: "root", "data-view": "edit" }, $.topbar, $.body, this.m.el, $.layer, $.file);
     sr.append($.root);
+    this.m.init();
     this._placeNodes(false);
 
     this._initGestures();
@@ -238,34 +252,71 @@ class BrotherPtouchPanel extends HTMLElement {
     if (this._placed === key) return;
     this._placed = key;
     const $ = this.$;
+    this._inspSig = "\u0000";
     if (narrow) {
-      $.topbar.replaceChildren($.menu, $.name, $.dirty, $.save, $.setup, $.print, $.more);
-      $.pbar.replaceChildren($.chip);
-      $.slotTape.replaceChildren($.gTape); $.slotLen.replaceChildren($.gLen);
-      $.slotCopies.replaceChildren($.copies);
-      $.ctoolbar.replaceChildren($.zoomOut, $.zoomChip, $.zoomIn, h("span", { class: "spacer" }), $.hist);
-      $.actionbar.replaceChildren($.addBtn, $.tools);
-      $.addSheet.append($.palette);
+      $.ctoolbar.replaceChildren();
     } else {
       $.topbar.replaceChildren($.menu, $.name, $.dirty, $.gTape, $.gLen, $.spacer, $.hist, $.chip, $.copiesWrap, $.save, $.setup, $.print);
-      $.pbar.replaceChildren();
+      $.hist.replaceChildren($.undo, $.redo);
       $.copiesWrap.append($.copies);
       $.gTape.append($.tape); $.gLen.append($.lenMode, $.lenMm);
       $.ctoolbar.replaceChildren($.zoomOut, $.zoomSel, $.zoomIn, $.sep, $.tools, $.readout);
-      $.actionbar.replaceChildren();
       $.paletteBox.append($.palette);
+      $.zoomChip.hidden = true;
     }
+    this.m.place(narrow);
+    if (narrow) $.addSheet.append($.palette);
+    this._renderInspector(true);
   }
 
-  _tab(id) {
-    if (id === "props") { this._setSheet(!(this.s.sheet && this.s.tab === "edit")); this.s.tab = "edit"; this._applyLayout(); this._afterSheet(); return; }
-    this.s.tab = id; this._closeLayer(); this._applyLayout();
+  // ---- view switching (phones): home <-> editor ------------------------------------------------
+  _showEditor({ restore = false } = {}) {
+    this.s.view = "edit";
+    if (this.s.layout === "narrow") {
+      if (restore) this.m.adopt("edit"); else this.m.push("edit");
+    }
+    this._applyLayout();
+    this._persistSession(true);
+    this.m.renderEditor();
+    requestAnimationFrame(() => { this.s.fit = true; this._refit(); this.$.scroller.scrollLeft = 0; this.$.scroller.scrollTop = 0; });
   }
-  _setSheet(open) { this.s.sheet = open; this._applyLayout(); this._afterSheet(); }
+  /** Back arrow / hardware Back in the editor. Resolves true when the editor was left. */
+  async _leaveEditor({ fromPop = false } = {}) {
+    if (this.s.view !== "edit") return true;
+    if (this.printFlow.phase === "waiting") this._cancelPrintWait();
+    if (this.store.dirty) {
+      const c = await this._choose(t("Save changes to this label before leaving?"), [
+        { key: "save", label: t("Save"), primary: true }, { key: "discard", label: t("Discard changes"), danger: true }, { key: "cancel", label: t("Keep editing") }]);
+      if (c === "save") { const ok = await this._save(); if (!ok) return false; }
+      else if (c !== "discard") return false;
+    }
+    this._goHome(fromPop);
+    return true;
+  }
+  _goHome(fromPop = false) {
+    this.m.setSnap("closed", { fromPop: false });
+    if (!fromPop) this.m.pop("edit");
+    this.previewer.cancel();
+    this.store.load(emptyDesign()); this.s.preview = null;
+    this.s.view = "home"; ssSet(null); storage.set("lastDesign", "");
+    this.p_homeScroll = true;
+    this._applyLayout(); this._renderHome();
+    this._refreshDesigns();
+  }
+  _renderHome() { this.m.renderHome(); }
+  _persistSession(now = false) {
+    if (this.s.view !== "edit" || this.s.layout !== "narrow") return;
+    const go = () => { const d = this.store.design; ssSet({ id: d.id || "", dirty: this.store.dirty, design: this.store.dirty || !d.id ? d : null }); };
+    clearTimeout(this._ssT);
+    if (now) go(); else this._ssT = setTimeout(go, 400);
+  }
+
+  /** Bottom sheet helpers */
   _afterSheet() { requestAnimationFrame(() => { this._refit(); this._revealSelected(); }); }
 
-  // ---- modal layer: add palette, menu, confirm (no window.confirm: blocked/ugly in WebViews) ----
+  // ---- modal layer: add palette, menus, print sheet, confirm (no window.confirm: blocked/ugly in WebViews) ----
   _openLayer(mode) { this.$.layer.dataset.mode = mode; this.$.layer.hidden = false; }
+  _closeLayerFromBack() { if (this.$.layer.dataset.mode === "wizard") this._closeWizard(); else this._closeLayer(); }
   _closeLayer() {
     if (this._dlgResolve) { const r = this._dlgResolve; this._dlgResolve = null; r(false); }
     const wasGallery = this.$.layer.dataset.mode === "gallery";
@@ -277,24 +328,50 @@ class BrotherPtouchPanel extends HTMLElement {
     if (wasPrinter) { const o = this._printerOpener; this._printerOpener = null; if (o?.isConnected) { try { o.focus({ preventScroll: true }); } catch { /* ignore */ } } else this.$.chip.focus?.({ preventScroll: true }); }
   }
   _restoreFocus() { const o = this._galleryOpener; this._galleryOpener = null; if (o?.isConnected) { try { o.focus({ preventScroll: true }); } catch { /* ignore */ } } }
-  /** In-app confirmation dialog; resolves true/false. */
-  _confirm(message, { ok = t("OK"), danger = false } = {}) {
+  /** In-app dialog with several buttons; resolves the chosen key ("" when dismissed). */
+  _choose(message, buttons) {
     const $ = this.$;
     this._confirmFromGallery = this.$.layer.dataset.mode === "gallery" && !this.$.layer.hidden;
     const backToDrawer = this.$.layer.dataset.mode === "printers" && !this.$.layer.hidden;
-    if (this._dlgResolve) { const r = this._dlgResolve; this._dlgResolve = null; r(false); }
+    if (this._dlgResolve) { const r = this._dlgResolve; this._dlgResolve = null; r(""); }
     return new Promise((resolve) => {
-      $.dlgText.textContent = message; $.dlgOk.textContent = ok; $.dlgOk.classList.toggle("danger", danger);
+      $.dlgText.textContent = message;
+      const [primary, ...others] = buttons;   // first = primary, last = cancel
+      const cancel = others.pop();
+      const fill = (btn, def) => { btn.hidden = !def; if (!def) return; btn.textContent = def.label; btn.className = "btn" + (def.primary ? " primary" : "") + (def.danger ? " danger" : ""); btn.onclick = () => done(def.key); };
       const done = (v) => {
         this._dlgResolve = null; $.layer.hidden = true; $.layer.dataset.mode = "";
         if (!v && this._confirmFromGallery) { this._confirmFromGallery = false; this._showGallery(false); }
         if (backToDrawer) { $.layer.dataset.mode = "printers"; $.layer.hidden = false; }
         resolve(v);
       };
-      this._dlgResolve = resolve;
-      $.dlgOk.onclick = () => done(true); $.dlgCancel.onclick = () => done(false);
+      this._dlgResolve = (v) => resolve(v ? v : "");
+      fill($.dlgOk, primary); fill($.dlgAlt, others[0]); fill($.dlgCancel, cancel);
+      $.dlgCancel.hidden = false;
       this._openLayer("confirm"); $.dlgCancel.focus();
     });
+  }
+  async _confirm(message, { ok = t("OK"), danger = false } = {}) {
+    return (await this._choose(message, [{ key: "ok", label: ok, primary: true, danger }, { key: "", label: t("Cancel") }])) === "ok";
+  }
+  /** Bottom action sheet: items = [{icon, label, run, danger, disabled}]. */
+  _actionSheet(title, items) {
+    const $ = this.$;
+    $.menuSheet.replaceChildren(h("h3", {}, h("span", { class: "grow" }, title), iconButton("mdi:close", t("Close"), () => this._closeLayer())),
+      ...items.map((it) => h("button", { class: "asheet-item" + (it.danger ? " danger" : ""), type: "button", disabled: !!it.disabled,
+        onClick: () => { this._closeLayer(); it.run(); } }, icon(it.icon), it.label)));
+    $.menuSheet.setAttribute("aria-label", title);
+    this._openLayer("menu");
+  }
+  _openEditorMenu() {
+    const d = this.store.design;
+    this._actionSheet(t("Label options"), [
+      { icon: "mdi:content-save-outline", label: t("Save"), run: () => this._save(), disabled: !!this.s.busy },
+      { icon: "mdi:ruler", label: t("Tape and length"), run: () => { this.store.select(null); this.m.openSheet("label", "half"); } },
+      { icon: "mdi:fit-to-screen-outline", label: t("Fit label to screen"), run: () => this._setZoom("fit") },
+      { icon: "mdi:shape-plus-outline", label: t("Start from a template"), run: () => this._openGallery(this.$.more) },
+      { icon: "mdi:delete-outline", label: t("Delete this label"), danger: true, disabled: !d.id, run: () => this._deleteDesign({ id: d.id, name: d.name }) },
+    ]);
   }
 
   _applyLayout() {
@@ -305,16 +382,25 @@ class BrotherPtouchPanel extends HTMLElement {
     $.root.classList.toggle("narrow", narrow);
     $.root.classList.toggle("has-menu", narrow && !!this._haNarrow);
     $.root.classList.toggle("coarse", !!(this._coarse || this._touchSeen));
-    $.root.classList.toggle("sheet-open", narrow && this.s.sheet);
-    $.root.classList.toggle("sheet-tall", this.s.sheetTall);
-    $.root.dataset.tab = this.s.tab;
-    for (const b of $.tabs.children) b.classList.toggle("on", b.dataset.tab === "props" ? (this.s.sheet && this.s.tab === "edit") : b.dataset.tab === this.s.tab);
+    if (w > 0 && !narrow) this.s.view = "edit";
+    $.root.dataset.view = this.s.view;
+    this._ensureHeight();
     this._placeNodes(narrow);
     if (!narrow) this._closeLayerIfPhoneOnly();
     if (this.s.layout !== (narrow ? "narrow" : "wide")) { this.s.layout = narrow ? "narrow" : "wide"; if (this.s.fit) this.s.zoomKey = ""; }
+    if (narrow) this.m.render();
     if (this.s.fit) this._refit();
   }
-  _closeLayerIfPhoneOnly() { const m = this.$.layer.dataset.mode; if (m === "add" || m === "menu") this._closeLayer(); }
+  /** Defensive: if the host chain gives us no height (height:100% of an auto parent), fill the viewport below our top edge. */
+  _ensureHeight() {
+    const r = this.getBoundingClientRect();
+    if (this._fixedH) { this.style.height = ""; this._fixedH = false; }
+    if (r.width > 0 && this.clientHeight < 160) {
+      const hh = Math.max(240, window.innerHeight - Math.max(0, r.top));
+      this.style.height = `${hh}px`; this._fixedH = true;
+    }
+  }
+  _closeLayerIfPhoneOnly() { const m = this.$.layer.dataset.mode; if (m === "add" || m === "menu" || m === "print") this._closeLayer(); }
 
   // ---- derived state ---------------------------------------------------
   get printer() { return this.s.printers.find((p) => p.entry_id === this.s.entryId) || null; }
@@ -335,7 +421,7 @@ class BrotherPtouchPanel extends HTMLElement {
   // ---- store events ----------------------------------------------------
   _onStore(what) {
     if (what === "load") {
-      this.s.testValues = {}; this._inspSig = "";
+      this.s.testValues = {}; this._inspSig = "\u0000";   // force a re-render (stale sync callbacks must not run)
       this._refit();
     }
     if (this._drag?.moved) {
@@ -344,13 +430,28 @@ class BrotherPtouchPanel extends HTMLElement {
       if (!this._drag.touch) this.previewer.request();
       return;
     }
-    if (what === "design" && this.s.fit && this.s.layout !== "narrow") this._refit();
+    const n = this.store.design.elements.length;
+    if (what === "design" && this.s.fit && (this.s.layout !== "narrow" || n !== this._lastCount)) this._refit();
+    this._lastCount = n;
     if (what === "design" || what === "load" || what === "meta") this.previewer.request();
     this._renderTop(); this._renderLayers(); this._patchOverlay(); this._renderInspector(); this._renderVars(); this._renderReadout();
     if (what === "load" || what === "design") this._renderRuler();
-    if (what === "selection") { this._renderSheetTitle(); }
+    if (this.s.layout === "narrow") {
+      if (what === "selection") this._onPhoneSelection();
+      if (what === "design" || what === "meta") this._persistSession();
+      if (what === "load" && this.s.view === "edit") this._persistSession(true);
+    }
   }
-  _renderSheetTitle() { const e = this.store.selected; this.$.sheetTitle.textContent = e ? t(TYPE_NAMES[e.type] || e.type) : t("Properties"); }
+  /** Selection changed on a phone: a sheet opened for an element closes when the selection is cleared; its title follows. */
+  _onPhoneSelection() {
+    const m = this.m;
+    if (m.snap !== "closed") {
+      if (!this.store.selected && m.sheetFor === "element") m.setSnap("closed");
+      else { m.sheetFor = this.store.selected ? "element" : "label"; this._renderInspector(true); this.$.sheetBody.scrollTop = 0; m.renderSheetHead(); }
+    }
+    m.renderToolbar();
+    if (this.store.selected) requestAnimationFrame(() => this._revealSelected());
+  }
 
   _renderAll() {
     this._renderTop(); this._renderDesigns(); this._renderLayers(); this._renderInspector(true); this._renderVars(true); this._renderCanvas(); this._applyLayout();
@@ -372,20 +473,23 @@ class BrotherPtouchPanel extends HTMLElement {
     $.chipDot.className = "dot " + cs.dot; $.chipName.textContent = t(cs.name); $.chipStatus.textContent = t(cs.status);
     $.chip.title = t(cs.title); $.chip.setAttribute("aria-label", `${t("Printer")}: ${cs.name}, ${cs.status}. ${t("Open printer list")}`);
     const first = this.s.printersLoaded && !this.s.printers.length;   // first run: no printer yet
-    $.setup.hidden = !first; $.print.hidden = first; $.root.classList.toggle("first-run", first);
+    $.root.classList.toggle("first-run", first);
     $.print.disabled = !!this.s.busy || !d.elements.length || this.printFlow.phase === "waiting";
     $.print.classList.toggle("waiting", this.printFlow.phase === "waiting");
     $.save.disabled = !!this.s.busy;
     const sel = this.store.selected;
-    for (const b of [$.tRotate, $.tDup, $.tDel, $.tEdit]) b.disabled = !sel;
+    for (const b of [$.tRotate, $.tDup, $.tDel]) b.disabled = !sel;
     const els = this.store.design.elements;
     $.tFront.disabled = !sel || els[els.length - 1] === sel;
     $.tBack.disabled = !sel || this.store.design.elements[0] === sel;
     $.empty.hidden = d.elements.length > 0;
+    $.setup.hidden = !first || this.s.layout === "narrow"; $.print.hidden = first && this.s.layout !== "narrow";
+    if (this.s.layout === "narrow" && this.m.enabled) { if (this.s.view === "edit") this.m.renderEditor(); else this.m.renderHome(); }
   }
 
   _renderDesigns() {
     const cur = this.store.design.id;
+    if (this.s.layout === "narrow" && this.s.view === "home") this.m.renderHome();
     this.$.designs.replaceChildren(...(this.s.designs.length ? this.s.designs.map((d) =>
       h("div", { class: "item" + (d.id === cur ? " sel" : "") },
         h("button", { class: "label", type: "button", onClick: () => this._open(d.id) }, icon("mdi:label-outline"), h("span", {}, d.name || d.id)),
@@ -447,8 +551,10 @@ class BrotherPtouchPanel extends HTMLElement {
   _refit() {
     if (!this.s.fit) return;
     const narrow = this.s.layout === "narrow";
-    const avail = (this.$.scroller.clientWidth || 600) - (narrow ? 56 : 36);
-    this.s.zoom = narrow ? G.mobileZoom(this.labelW, avail) : G.fitZoom(this.labelW, avail);
+    const cw = this.$.scroller.clientWidth;
+    if (narrow && !cw) return;   // hidden (home view): fitted when the editor opens
+    const avail = (cw || 600) - (narrow ? 56 : 36);   // phones: room for the selection handles (22 px outside the label) on both sides
+    this.s.zoom = narrow ? M.fitWidthZoom(this.labelW, avail) : G.fitZoom(this.labelW, avail);
     this._renderCanvas();
   }
 
@@ -457,7 +563,7 @@ class BrotherPtouchPanel extends HTMLElement {
     if (this.s.fit) $.zoomSel.value = "fit";
     else if (ZOOMS.includes(z)) $.zoomSel.value = String(z);
     else { const c = $.zoomSel.querySelector("option[value=custom]"); c.textContent = `${Math.round(z * 100)}%`; c.hidden = false; $.zoomSel.value = "custom"; }
-    $.zoomChip.textContent = `${Math.round(z * 100)}%`;
+    $.zoomChip.textContent = this.s.fit ? t("Fit") : `${Math.round(z * 100)}%`;
     $.stage.style.width = `${W * z}px`; $.stage.style.height = `${H * z}px`;
     const pv = this.s.preview;
     if (pv) { $.img.style.width = `${pv.width * z}px`; $.img.style.height = `${pv.height * z}px`; }
@@ -630,7 +736,7 @@ class BrotherPtouchPanel extends HTMLElement {
   /** Open the inspector (sheet on phones) and focus the main text field, if any. Runs inside the user gesture so the keyboard may open. */
   _editSel() {
     const el = this.store.selected; if (!el) return;
-    if (this.s.layout === "narrow") { this.s.tab = "edit"; this.s.sheet = true; this._applyLayout(); this._afterSheet(); }
+    if (this.s.layout === "narrow") this.m.openSheet("element", this.m.snap === "closed" ? "half" : this.m.snap);
     const f = this.$.insp.querySelector("textarea") || (["barcode", "icon"].includes(el.type) ? this.$.insp.querySelector("input[type=text]") : null);
     if (f) { f.focus({ preventScroll: true }); try { f.setSelectionRange(f.value.length, f.value.length); } catch { /* ignore */ } }
   }
@@ -783,30 +889,36 @@ class BrotherPtouchPanel extends HTMLElement {
   _onFocusIn(e) {
     if (this.s.layout !== "narrow" || !this._isEditable(e.composedPath()[0])) return;
     const el = e.composedPath()[0];
-    setTimeout(() => { this._onViewport(); try { el.scrollIntoView({ block: "center", behavior: "smooth" }); } catch { /* ignore */ } this._revealSelected(); }, 320);
+    setTimeout(() => { this._onViewport(); try { el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "smooth" }); } catch { /* ignore */ } this._revealSelected(); }, 320);
   }
-  /** Detect the soft keyboard: Android WebViews shrink the layout viewport, iOS only the visual viewport. */
+  /** Soft keyboard: shrink the panel to the visible area (visualViewport) so the sheet sits above the keyboard. */
   _onViewport() {
     const root = this.$?.root; if (!root) return;
-    const vv = window.visualViewport, ih = window.innerHeight;
-    if (!this._baseW || Math.abs(window.innerWidth - this._baseW) > 1) { this._baseW = window.innerWidth; this._baseH = ih; }
-    this._baseH = Math.max(this._baseH, ih);
-    const vh = vv ? vv.height : ih;
-    const shrunk = this._baseH - vh > 120;
-    const open = this.s.layout === "narrow" && shrunk && this._isEditable(this.shadowRoot.activeElement);
-    root.classList.toggle("kb-open", open);
-    // iOS: layout viewport keeps its height, so size the panel to what is really visible
-    const iosStyle = open && ih - vh > 120;
-    root.classList.toggle("kb-fixed", iosStyle);
-    if (iosStyle) { const top = Math.max(0, this.getBoundingClientRect().top - (vv?.offsetTop || 0)); root.style.setProperty("--bp-vvh", `${Math.max(200, vh - top)}px`); }
+    const narrow = this.s.layout === "narrow";
+    const kb = narrow ? M.kbInset(this.getBoundingClientRect().bottom, window.visualViewport) : 0;
+    this._setKbInset(kb);
+  }
+  _setKbInset(kb) {
+    const root = this.$.root;
+    if (kb === this.m.kb) return;
+    this.m.kb = kb;
+    root.classList.toggle("kb-open", kb > 0);
+    root.style.setProperty("--bp-kb", `${kb}px`);
+    this.m.renderToolbar();
     this._refit();
-    if (open) this._revealSelected();
+    requestAnimationFrame(() => { if (this.m.snap !== "closed") this.m.applyHeight(); this._revealSelected(); });
   }
 
   // ---- actions ---------------------------------------------------------
   _notify(text, kind = "info", ms = 3500) {
-    const s = kind === "err" ? this.$.errStrip : this.$.msgStrip;
-    if (kind === "err") { this.$.errStrip.hidden = false; this.$.errStrip.textContent = text; return; }
+    if (kind === "err") {
+      this.$.errStrip.hidden = false; this.$.errStrip.textContent = text;
+      this.m.homeErr.hidden = false; this.m.homeErr.textContent = text;
+      clearTimeout(this._errT); this._errT = setTimeout(() => { this.m.homeErr.hidden = true; }, 8000);
+      return;
+    }
+    if (this.s.layout === "narrow") { this.m.toast(text, ms); return; }
+    const s = this.$.msgStrip;
     s.hidden = false; s.textContent = text;
     clearTimeout(this._msgT); this._msgT = setTimeout(() => { s.hidden = true; }, ms);
   }
@@ -818,6 +930,7 @@ class BrotherPtouchPanel extends HTMLElement {
   }
   async _refreshDesigns() {
     try { this.s.designs = await this.api.listDesigns(); } catch (e) { this._notify(e.message || String(e), "err"); }
+    this.s.designsLoaded = true;
     this._renderDesigns();
   }
   async _confirmDiscard() { return !this.store.dirty || this._confirm(t("Discard unsaved changes?"), { ok: t("Discard"), danger: true }); }
@@ -826,13 +939,13 @@ class BrotherPtouchPanel extends HTMLElement {
     await this._guard(t("Open failed"), async () => {
       const d = await this.api.getDesign(id);
       this.store.load(d); storage.set("lastDesign", id); this._renderDesigns();
-      this.s.tab = "edit"; this._applyLayout();
+      if (this.s.layout === "narrow") this._showEditor();
     });
   }
   async _new() {
     if (!(await this._confirmDiscard())) return;
     this.store.load(emptyDesign()); storage.set("lastDesign", ""); this._renderDesigns();
-    this.s.tab = "edit"; this._applyLayout();
+    if (this.s.layout === "narrow") this._showEditor();
   }
   // ---- template gallery ---------------------------------------------------------
   _openGallery(opener) {
@@ -854,16 +967,20 @@ class BrotherPtouchPanel extends HTMLElement {
     design.id = ""; design.name = tpl.name || design.name;
     this.store.load(design, { saved: false });   // unsaved: dirty until the user saves
     storage.set("lastDesign", ""); this._renderDesigns();
-    this.s.tab = "edit";
-    if (this.s.layout === "narrow") { this.s.sheet = true; this.s.sheetTall = false; }   // the sheet shows the variables to fill in
-    this._applyLayout(); this._afterSheet();
-    if (this.s.layout === "narrow") requestAnimationFrame(() => requestAnimationFrame(() => { this.$.sheetBody.scrollTop = Math.max(0, this.$.vars.offsetTop - 8); }));   // show the variables, keep the label visible
+    if (this.s.layout === "narrow") {
+      this._showEditor();
+      if (Object.keys(design.variables || {}).length) {   // the sheet shows the variables to fill in
+        this.m.openSheet("label", "half");
+        requestAnimationFrame(() => requestAnimationFrame(() => { this.$.sheetBody.scrollTop = Math.max(0, this.$.vars.offsetTop - 8); }));
+      }
+    }
     const first = this.$.vars.querySelector(".vars-row input:nth-child(2)");
     if (first && !(this._coarse || this._touchSeen)) { first.focus({ preventScroll: true }); first.select?.(); }
     this._notify(`${t("Created from template")}: ${tpl.name}`, "info", 2500);
   }
 
   async _save() {
+    let ok = false;
     await this._guard(t("Save failed"), async () => {
       const saved = await this.api.saveDesign(this.store.design);
       this.store.markSaved(saved);
@@ -871,7 +988,10 @@ class BrotherPtouchPanel extends HTMLElement {
       storage.set("lastDesign", saved.id);
       await this._refreshDesigns();
       this._notify(t("Saved"), "info", 2000);
+      this._persistSession(true);
+      ok = true;
     });
+    return ok;
   }
   async _duplicateDesign(id) {
     await this._guard(t("Duplicate failed"), async () => {
@@ -884,13 +1004,14 @@ class BrotherPtouchPanel extends HTMLElement {
     if (!(await this._confirm(`${t("Delete")} "${d.name || d.id}"?`, { ok: t("Delete"), danger: true }))) return;
     await this._guard(t("Delete failed"), async () => {
       await this.api.deleteDesign(d.id);
-      if (this.store.design.id === d.id) { this.store.load(emptyDesign()); storage.set("lastDesign", ""); }
+      if (this.store.design.id === d.id) { this.store.load(emptyDesign()); storage.set("lastDesign", ""); if (this.s.layout === "narrow" && this.s.view === "edit") this._goHome(); }
       await this._refreshDesigns();
     });
   }
   async _print() {
     const p = this.printer;
     if (!p) { this._openWizard(false); return; }
+    if (this.s.layout === "narrow") { this.s.printDone = 0; if (this.printFlow.phase !== "waiting") this.printFlow = PL.dismissPrint(this.printFlow); this._openLayer("print"); this.m.renderPrint(); return; }
     if (this.printFlow.phase === "waiting") return;
     if (this.s.tapeSel !== "auto" && p?.tape_mm && p.tape_mm !== this.s.tapeSel &&
         !(await this._confirm(`${t("The printer has")} ${G.tapeLabel(p.tape_mm)} ${t("tape loaded, but this design is set to")} ${G.tapeLabel(this.s.tapeSel)}. ${t("Print anyway?")}`, { ok: t("Print") }))) return;
@@ -911,17 +1032,22 @@ class BrotherPtouchPanel extends HTMLElement {
     this.printFlow = flow;
     if (flow.phase !== "waiting") clearInterval(this._pTick);
     if (late?.ok) this._notify(t("The label you stopped waiting for was sent to the printer after all."), "info", 5000);
-    if (flow.phase === "done") { this._notify(`${t("Sent to printer")}${req.copies > 1 ? ` (${req.copies}×)` : ""}`, "info"); this.printFlow = PL.dismissPrint(flow); }
-    this._renderPrintStrip(); this._renderTop();
+    if (flow.phase === "done") {
+      this.printFlow = PL.dismissPrint(flow);
+      if (this.s.layout === "narrow" && this.$.layer.dataset.mode === "print") this.s.printDone = req.copies;
+      else this._notify(`${t("Sent to printer")}${req.copies > 1 ? ` (${req.copies}×)` : ""}`, "info");
+    }
+    this._renderPrintStrip(); this._renderTop(); this.m.renderPrint();
     this._refreshPrinters().catch(() => {});
   }
   _cancelPrintWait() {
     this.printFlow = PL.cancelPrint(this.printFlow); clearInterval(this._pTick);
-    this._renderPrintStrip(); this._renderTop();
+    this._renderPrintStrip(); this._renderTop(); this.m.renderPrint();
   }
   _renderPrintStrip() {
+    this.m?.renderPrint();
     const f = this.printFlow, el = this.$.printStrip;
-    el.hidden = f.phase === "idle";
+    el.hidden = f.phase === "idle" || (this.s.layout === "narrow" && this.$.layer.dataset.mode === "print");
     if (f.phase === "idle") { el.replaceChildren(); return; }
     el.className = "pstrip " + (f.phase === "failed" ? "err" : "wait");
     el.setAttribute("role", f.phase === "failed" ? "alert" : "status");
@@ -967,7 +1093,7 @@ class BrotherPtouchPanel extends HTMLElement {
     const el = newElement(type, this.store.design, this.tape, info);
     this._closeLayer();
     this.store.addElement(el);
-    if (this.s.layout === "narrow") { this.s.tab = "edit"; this._applyLayout(); requestAnimationFrame(() => this._revealSelected()); }
+    if (this.s.layout === "narrow") this.m.openSheet("element", "peek");   // new elements need content: show their fields
   }
   _addImage() {
     const f = this.$.file.files?.[0]; this.$.file.value = "";
@@ -995,7 +1121,8 @@ class BrotherPtouchPanel extends HTMLElement {
     const tag = path[0]?.tagName;
     const inField = ["INPUT", "TEXTAREA", "SELECT"].includes(tag) && path[0].type !== "checkbox" && path[0].type !== "file";
     const mod = ev.ctrlKey || ev.metaKey, k = ev.key;
-    if (k === "Escape" && !this.$.layer.hidden) { ev.preventDefault(); if (this.$.layer.dataset.mode === "wizard") this._closeWizard(); else this._closeLayer(); return; }
+    if (k === "Escape" && !this.$.layer.hidden) { ev.preventDefault(); this._closeLayerFromBack(); return; }
+    if (k === "Escape" && this.s.layout === "narrow" && this.m.snap !== "closed" && !inField) { this.m.setSnap("closed"); return; }
     if (mod && !ev.altKey && k.toLowerCase() === "s") { ev.preventDefault(); this._save(); return; }
     if (inField) return;
     if (mod && k.toLowerCase() === "z") { ev.preventDefault(); ev.shiftKey ? this.store.redo() : this.store.undo(); return; }
@@ -1017,6 +1144,7 @@ class BrotherPtouchPanel extends HTMLElement {
     this._inspSig = sig; this._sync = [];
     const box = this.$.insp;
     if (!el) {
+      if (this.s.layout === "narrow") { box.replaceChildren(this._labelFields(true)); return; }
       box.replaceChildren(h("h3", {}, t("Properties")), h("div", { class: "hint" }, t("Select an element on the canvas or in the layer list.")),
         this._labelFields());
       return;
@@ -1127,13 +1255,16 @@ class BrotherPtouchPanel extends HTMLElement {
     box.replaceChildren(...kids);
   }
 
-  _labelFields() {
+  _labelFields(phone = false) {
     // label-level options shown when nothing is selected
     const d = () => this.store.design;
     const pad = h("input", { type: "number", min: 0, max: 100, "aria-label": t("Padding"), onInput: () => { const v = parseInt(pad.value); if (v >= 0) this.store.setMeta({ padding_dots: v }, "pad"); } });
     this._sync.push(() => { if (this.shadowRoot.activeElement !== pad) pad.value = d().padding_dots ?? 6; });
     pad.value = d().padding_dots ?? 6;
-    return h("div", {}, h("h3", { style: "margin-top:14px" }, t("Label")),
+    const $ = this.$;
+    return h("div", {}, phone ? null : h("h3", { style: "margin-top:14px" }, t("Label")),
+      phone && h("div", { class: "field" }, h("label", {}, t("Tape")), $.gTape),
+      phone && h("div", { class: "field" }, h("label", {}, t("Length")), $.gLen),
       h("div", { class: "field" }, h("label", {}, t("Padding (dots)")), pad),
       h("div", { class: "hint" }, t("Padding applies to auto-length labels only.")));
   }

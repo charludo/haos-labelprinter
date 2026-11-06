@@ -1,0 +1,86 @@
+name: Compatibility report
+description: Tell us whether the integration works with your printer (worked or not).
+title: "[Compatibility] "
+labels: ["compatibility"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for testing. Reports of failures are as useful as reports of success.
+  - type: dropdown
+    id: model
+    attributes:
+      label: Printer model
+      options:
+        - PT-P710BT
+        - PT-P700
+        - PT-P750W
+        - PT-E550W
+        - PT-P900W / PT-P950NW
+        - PT-H500
+        - PT-E500
+        - PT-P300BT
+        - Other (write it below)
+    validations:
+      required: true
+  - type: input
+    id: other_model
+    attributes:
+      label: Other model
+      description: Only if you chose "Other".
+      placeholder: PT-XXXX
+  - type: checkboxes
+    id: connection
+    attributes:
+      label: How did you connect it?
+      options:
+        - label: USB
+        - label: Bluetooth
+        - label: Network bridge
+  - type: checkboxes
+    id: worked
+    attributes:
+      label: What worked?
+      description: Tick only what worked. Leave the rest empty.
+      options:
+        - label: Home Assistant detected the printer
+        - label: Tape width was read correctly
+        - label: Printed text
+        - label: Printed an icon
+        - label: Printed a QR code
+        - label: Printed a strip of several labels
+        - label: Auto-cut worked
+        - label: Bluetooth pairing worked
+        - label: The label editor worked
+  - type: input
+    id: tape
+    attributes:
+      label: Tape types used
+      description: Width and kind, for example 12 mm black on white laminated.
+  - type: input
+    id: ha_version
+    attributes:
+      label: Home Assistant version and install type
+      description: For example 2026.10.4, Home Assistant OS / Container / Core.
+    validations:
+      required: true
+  - type: input
+    id: integration_version
+    attributes:
+      label: Integration version
+      description: Shown in HACS.
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes or log excerpt
+      description: Anything useful, or what went wrong. Remove passwords, tokens and other secrets.
+      render: text
+  - type: checkboxes
+    id: secrets
+    attributes:
+      label: Privacy check
+      options:
+        - label: I checked there is no secret in what I pasted.
+          required: true
