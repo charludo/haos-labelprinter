@@ -3,6 +3,11 @@
 All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- Bluetooth printers could not be reached when another program on the host had registered the Serial Port profile with BlueZ: BlueZ allows one per UUID, so connecting failed with "Could not talk to the printer". The connection now falls back to a plain RFCOMM socket on the configured channel.
+
 ## [0.3.1]
 
 ### Changed
