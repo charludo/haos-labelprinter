@@ -177,11 +177,13 @@ def _render_callable(resolved: dict, assets: Any) -> Callable[[int, int], list]:
 
 async def async_print_design(hass: HomeAssistant, coordinator: Any, design: dict,
                              variables: dict | None, *, copies: int = 1, auto_cut: bool = True,
-                             cut_each: bool = False, margin_mm: float = 2.0) -> None:
+                             cut_each: bool = False, margin_mm: float = 2.0, chain: bool = False,
+                             cut_mark: bool = False) -> None:
     resolved, _warnings = await async_resolve_templates(hass, design, variables)
     assets = await async_get_assets(hass)
     await coordinator.async_print(_render_callable(resolved, assets), copies=copies,
-                                  auto_cut=auto_cut, cut_each=cut_each, margin_mm=margin_mm)
+                                  auto_cut=auto_cut, cut_each=cut_each, margin_mm=margin_mm,
+                                  chain=chain, cut_mark=cut_mark)
 
 
 def _loaded_coordinators(hass: HomeAssistant) -> list:
@@ -351,6 +353,9 @@ async def ws_preview(hass, connection, msg):
     vol.Optional("entry_id"): str,
     vol.Optional("variables"): dict,
     vol.Optional("copies", default=1): vol.All(vol.Coerce(int), vol.Range(min=1, max=20)),
+    vol.Optional("auto_cut", default=True): bool,
+    vol.Optional("chain", default=False): bool,
+    vol.Optional("cut_mark", default=False): bool,     # printers without a cutter
 })
 async def ws_print(hass, connection, msg):
     if ("design" in msg) == ("design_id" in msg):
@@ -361,7 +366,15 @@ async def ws_print(hass, connection, msg):
         data = await async_get_data(hass)
         design = _need(data.designs, msg["design_id"])
     coord = find_coordinator(hass, msg.get("entry_id"))
-    await async_print_design(hass, coord, design, msg.get("variables"), copies=msg["copies"])
+    await async_print_design(hass, coord, design, msg.get("variables"), copies=msg["copies"],
+                             auto_cut=msg["auto_cut"], chain=msg["chain"], cut_mark=msg["cut_mark"])
+    connection.send_result(msg["id"], {})
+
+
+@_command({vol.Required("type"): "brother_ptouch/feed", vol.Optional("entry_id"): str})
+async def ws_feed(hass, connection, msg):
+    """Feed the tape out, e.g. to release a chained label."""
+    await find_coordinator(hass, msg.get("entry_id")).async_feed()
     connection.send_result(msg["id"], {})
 
 
@@ -444,7 +457,7 @@ async def ws_templates_build(hass, connection, msg):
     connection.send_result(msg["id"], {"design": design, "tape_mm": tape})
 
 
-COMMANDS = (ws_printers, ws_list, ws_get, ws_save, ws_delete, ws_preview, ws_print,
+COMMANDS = (ws_printers, ws_list, ws_get, ws_save, ws_delete, ws_preview, ws_print, ws_feed,
             ws_fonts_search, ws_fonts_ensure, ws_icons_search, ws_templates_list,
             ws_templates_build)
 

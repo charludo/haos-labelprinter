@@ -18,7 +18,7 @@ from .const import (CONF_BATCH_WINDOW, CONF_MODEL, CONF_ORIENTATION, CONF_TRANSP
                     DEFAULT_BATCH_WINDOW, DEFAULT_ORIENTATION, DEFAULT_WAKE_SECONDS, DOMAIN,
                     OFFLINE_REASONS, POLL_WAKE_SECONDS, REASON_ERROR, REASON_OK, SCAN_INTERVAL_SECONDS,
                     friendly_message)
-from .ptouch import (JobOptions, PrinterError, PrinterStatus, PtouchError, build_jobs,
+from .ptouch import (JobOptions, PrinterError, PrinterStatus, PtouchError, build_feed_job, build_jobs,
                      make_transport, mm_to_dots)
 from .ptouch.protocol import MEDIA_INCOMPATIBLE
 
@@ -37,6 +37,8 @@ class _Request:
     auto_cut: bool
     cut_each: bool
     margin_mm: float
+    chain: bool
+    cut_mark: bool
     future: asyncio.Future
 
 
@@ -134,13 +136,15 @@ class PTouchCoordinator(DataUpdateCoordinator[PrinterStatus]):
                 "message": "Connected."}
 
     async def async_print(self, render: Renderer, *, copies: int = 1, auto_cut: bool = True,
-                          cut_each: bool = False, margin_mm: float = 2.0) -> None:
+                          cut_each: bool = False, margin_mm: float = 2.0, chain: bool = False,
+                          cut_mark: bool = False) -> None:
         """Queue a label. Requests arriving within the batch window print as ONE strip.
 
         A printer wastes ~25 mm of blank leader at the start of every job, so
         labels sent in a burst are merged into one job (one leader, one cut).
         """
-        req = _Request(render, copies, auto_cut, cut_each, margin_mm, self.hass.loop.create_future())
+        req = _Request(render, copies, auto_cut, cut_each, margin_mm, chain, cut_mark,
+                       self.hass.loop.create_future())
         self._pending.append(req)
         if self._flush_task is None:
             window = float(self.config_entry.options.get(CONF_BATCH_WINDOW, DEFAULT_BATCH_WINDOW))
@@ -163,17 +167,40 @@ class PTouchCoordinator(DataUpdateCoordinator[PrinterStatus]):
                     r.future.set_result(None)
         await self.async_request_refresh()
 
+    async def _ready_status(self) -> PrinterStatus:
+        """Fresh status of a printer that can print now (call with the print lock held)."""
+        status = await self.hass.async_add_executor_job(self._status_call, self.wake_seconds)
+        self._record_ok()
+        self.async_set_updated_data(status)
+        if status.errors:
+            raise HomeAssistantError(f"Printer reports: {', '.join(status.errors)}")
+        if not status.has_tape or status.media_type == MEDIA_INCOMPATIBLE:
+            raise HomeAssistantError("No compatible tape loaded in the printer")
+        return status
+
+    async def async_feed(self) -> None:
+        """Feed the tape out, e.g. to release a chained label."""
+        async with self._print_lock:
+            try:
+                status = await self._ready_status()
+                job = build_feed_job(JobOptions(tape_mm=status.media_width, media_type=status.media_type,
+                                                model=status.model))
+
+                def work() -> None:
+                    self.transport.wake_timeout = self.wake_seconds
+                    self.transport.print_job(job, pages=1)
+
+                await self.hass.async_add_executor_job(work)
+            except PrinterError as err:
+                raise HomeAssistantError(f"Printer error: {err}") from err
+            except PtouchError as err:
+                raise HomeAssistantError(self._record_failure(err)) from err
+
     async def _print_batch(self, batch: list[_Request]) -> None:
         orientation = self.config_entry.options.get(CONF_ORIENTATION, DEFAULT_ORIENTATION)
         async with self._print_lock:
             try:
-                status = await self.hass.async_add_executor_job(self._status_call, self.wake_seconds)
-                self._record_ok()
-                self.async_set_updated_data(status)
-                if status.errors:
-                    raise HomeAssistantError(f"Printer reports: {', '.join(status.errors)}")
-                if not status.has_tape or status.media_type == MEDIA_INCOMPATIBLE:
-                    raise HomeAssistantError("No compatible tape loaded in the printer")
+                status = await self._ready_status()
 
                 def work() -> None:
                     images: list[Image.Image] = []
@@ -191,7 +218,9 @@ class PTouchCoordinator(DataUpdateCoordinator[PrinterStatus]):
                         tape_mm=status.media_width, media_type=status.media_type,
                         auto_cut=any(r.auto_cut for r in ok), cut_each=any(r.cut_each for r in ok),
                         margin_dots=mm_to_dots(ok[0].margin_mm), orientation=orientation,
-                        model=status.model))
+                        model=status.model,
+                        chain=all(r.chain for r in ok),      # feed out unless every request chains
+                        cut_mark=any(r.cut_mark for r in ok)))
                     self.transport.wake_timeout = self.wake_seconds
                     for job in jobs:
                         self.transport.print_job(job, pages=1)

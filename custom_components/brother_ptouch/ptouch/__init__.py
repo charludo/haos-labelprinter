@@ -5,6 +5,7 @@ from .protocol import (
     TAPE_GEOMETRY,
     JobOptions,
     PrinterStatus,
+    build_feed_job,
     build_job,
     build_jobs,
     has_cutter,
@@ -26,6 +27,6 @@ __all__ = [
     "DEFAULT_RFCOMM_CHANNEL", "ORIENTATIONS", "TAPE_GEOMETRY", "DeviceFileTransport",
     "HTTPTransport", "JobOptions", "PrinterError", "PrinterStatus", "ProtocolError",
     "PtouchError", "RFCOMMTransport", "Transport", "TransportError", "USBTransport",
-    "build_job", "build_jobs", "has_cutter", "make_transport", "mm_to_dots", "render_image", "render_qr",
-    "render_text", "tape_pins",
+    "build_feed_job", "build_job", "build_jobs", "has_cutter", "make_transport", "mm_to_dots", "render_image",
+    "render_qr", "render_text", "tape_pins",
 ]

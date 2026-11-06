@@ -6,7 +6,8 @@ from PIL import Image
 
 import ptouch_bridge
 from ptouch import (HTTPTransport, JobOptions, PrinterError, PrinterStatus, TransportError,
-                    build_job, render_image, render_qr, render_text, tape_pins)
+                    build_feed_job, build_job, build_jobs, render_image, render_qr, render_text,
+                    tape_pins)
 from ptouch.protocol import (MODEL_P300BT, STATUS_COMPLETED, STATUS_ERROR, image_to_lines, packbits,
                              split_status_packets, unpackbits)
 from ptouch.transport import Transport
@@ -94,6 +95,34 @@ def test_p300bt_geometry():
 def test_p300bt_never_cuts():
     job = build_job([Image.new("1", (20, 64), 0)], JobOptions(tape_mm=12, model=MODEL_P300BT))
     assert b"\x1biM\x00" in job and b"\x1biM\x40" not in job
+
+
+def test_cut_mark_only_without_cutter():
+    img = Image.new("1", (20, 64), 0)
+    assert b"\x1biM\x40" in build_job([img], JobOptions(tape_mm=12, model=MODEL_P300BT, cut_mark=True))
+    p710 = Image.new("1", (20, 70), 0)                     # with a cutter, auto_cut alone decides
+    assert b"\x1biM\x00" in build_job([p710], JobOptions(tape_mm=12, auto_cut=False, cut_mark=True))
+
+
+def test_chain_printing():
+    img = Image.new("1", (20, 70), 0)
+    assert b"\x1biK\x08" in build_job([img], JobOptions(tape_mm=12))
+    assert b"\x1biK\x00" in build_job([img], JobOptions(tape_mm=12, chain=True))
+
+
+def test_cut_marks_split_labels_into_jobs():
+    imgs = [Image.new("1", (20, 64), 0)] * 3
+    assert len(build_jobs(imgs, JobOptions(tape_mm=12, model=MODEL_P300BT))) == 1
+    jobs = build_jobs(imgs, JobOptions(tape_mm=12, model=MODEL_P300BT, cut_mark=True, chain=True))
+    assert len(jobs) == 3 and all(b"\x1biM\x40" in j and b"\x1biK\x00" in j for j in jobs)
+
+
+def test_feed_job():
+    job = build_feed_job(JobOptions(tape_mm=12, model=MODEL_P300BT, chain=True, cut_mark=True))
+    i = job.index(b"\x1biz")
+    assert int.from_bytes(job[i + 7:i + 11], "little") == 1          # one raster line ...
+    assert job.endswith(b"Z\x1a")                                    # ... blank, then print: never a bare 0x1A
+    assert b"\x1biK\x08" in job and b"\x1biM\x00" in job and b"\x1bid\x00\x00" in job
 
 
 def test_wrong_height_rejected():

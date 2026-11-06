@@ -16,7 +16,7 @@ from .const import (CONF_ADDRESS, CONF_CHANNEL, CONF_TRANSPORT, CONF_URL, CONF_U
                     REASON_ERROR, REASON_OK, TRANSPORT_BLUETOOTH, TRANSPORT_BRIDGE, TRANSPORT_USB,
                     friendly_message)
 from .editor_api import find_coordinator
-from .ptouch import TAPE_GEOMETRY, render_text, tape_pins
+from .ptouch import TAPE_GEOMETRY, has_cutter, render_text, tape_pins
 from .ptouch.protocol import MODEL_NAMES
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,7 +32,7 @@ def printer_rows(hass: HomeAssistant) -> list[dict]:
         data = entry.data
         row: dict[str, Any] = {
             "entry_id": entry.entry_id, "title": entry.title, "name": entry.title,
-            "transport": data.get(CONF_TRANSPORT), "model": None, "tape_pins": None,
+            "transport": data.get(CONF_TRANSPORT), "model": None, "has_cutter": None, "tape_pins": None,
             "tape_mm": None, "tape": None,
             "state": "offline", "online": False, "reason": REASON_ERROR, "message": ""}
         for key, conf in (("address", CONF_ADDRESS), ("url", CONF_URL), ("serial", CONF_USB_SERIAL)):
@@ -46,6 +46,7 @@ def printer_rows(hass: HomeAssistant) -> list[dict]:
             row["state"] = "offline" if not row["online"] else getattr(status, "state", "idle")
             if (model := coord.model) is not None:   # also known while the printer is offline
                 row["model"] = MODEL_NAMES.get(model)
+                row["has_cutter"] = has_cutter(model)
                 row["tape_pins"] = {mm: tape_pins(mm, model) for mm in TAPE_GEOMETRY}
             if status is not None and getattr(status, "has_tape", False):
                 width = int(status.media_width)

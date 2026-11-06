@@ -22,6 +22,8 @@ COMMON = {
     vol.Optional("auto_cut", default=True): cv.boolean,
     vol.Optional("cut_each", default=False): cv.boolean,
     vol.Optional("margin_mm", default=2.0): vol.All(vol.Coerce(float), vol.Range(min=0, max=50)),
+    vol.Optional("chain", default=False): cv.boolean,
+    vol.Optional("cut_mark", default=False): cv.boolean,
 }
 FONT = {
     vol.Optional("font_size"): vol.All(vol.Coerce(int), vol.Range(min=6, max=200)),
@@ -67,9 +69,7 @@ def _coordinator(hass: HomeAssistant, call: ServiceCall) -> PTouchCoordinator:
 
 
 def _job_args(call: ServiceCall) -> dict:
-    return {"copies": call.data["copies"], "auto_cut": call.data["auto_cut"],
-            "cut_each": call.data["cut_each"],
-            "margin_mm": call.data["margin_mm"]}
+    return {k: call.data[k] for k in ("copies", "auto_cut", "cut_each", "margin_mm", "chain", "cut_mark")}
 
 
 def _check_font(hass: HomeAssistant, call: ServiceCall) -> str | None:
@@ -155,9 +155,7 @@ def async_register_services(hass: HomeAssistant) -> None:
                 design = templates.build_template(ref, status.media_width, status.model)
             except PtouchError as err:
                 raise HomeAssistantError(str(err)) from err
-        await async_print_design(hass, coord, design, call.data["variables"], copies=call.data["copies"],
-                                 auto_cut=call.data["auto_cut"], cut_each=call.data["cut_each"],
-                                 margin_mm=call.data["margin_mm"])
+        await async_print_design(hass, coord, design, call.data["variables"], **_job_args(call))
 
     hass.services.async_register(DOMAIN, "print_template", print_template, schema=TEMPLATE_SCHEMA)
     hass.services.async_register(DOMAIN, "print_text", print_text, schema=TEXT_SCHEMA)

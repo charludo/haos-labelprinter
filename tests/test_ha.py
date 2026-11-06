@@ -103,6 +103,40 @@ async def test_print_on_p300bt(hass, fake):
     assert ink and ink & ~(((1 << 64) - 1) << 32) == 0      # only pins 32..95 carry ink
 
 
+async def test_chain_cut_marks_and_feed_on_p300bt(hass, fake):
+    from custom_components.brother_ptouch.ptouch.protocol import MODEL_P300BT
+    fake.st = status(model=MODEL_P300BT)
+    await setup(hass)
+    await hass.services.async_call(DOMAIN, "print_text", {"text": "A", "copies": 2, "chain": True, "cut_mark": True},
+                                   blocking=True)
+    assert len(fake.jobs) == 2                     # cut marks end a job: one per label, chained
+    assert all(b"\x1biK\x00" in j and b"\x1biM\x40" in j for j, _ in fake.jobs)
+    feed = hass.states.get("button.brother_p_touch_feed_tape")
+    assert feed is not None
+    await hass.services.async_call("button", "press", {"entity_id": feed.entity_id}, blocking=True)
+    job, _ = fake.jobs[-1]
+    assert b"\x1biK\x08" in job and job.endswith(b"Z\x1a")
+
+
+async def test_batch_feeds_unless_all_requests_chain(hass, fake):
+    import asyncio
+    from custom_components.brother_ptouch.ptouch.protocol import MODEL_P300BT
+    fake.st = status(model=MODEL_P300BT)
+    entry = await setup(hass)
+    hass.config_entries.async_update_entry(entry, options={"batch_window": 0.3})
+    await hass.async_block_till_done()
+    await asyncio.gather(
+        hass.services.async_call(DOMAIN, "print_text", {"text": "a", "chain": True}, blocking=True),
+        hass.services.async_call(DOMAIN, "print_text", {"text": "b"}, blocking=True))
+    (job, _), = fake.jobs
+    assert b"\x1biK\x08" in job
+
+
+async def test_no_feed_button_with_cutter(hass, fake):
+    await setup(hass)
+    assert hass.states.get("button.brother_p_touch_feed_tape") is None
+
+
 async def test_print_qr_and_image(hass, fake, tmp_path):
     from PIL import Image
     await setup(hass)
@@ -176,6 +210,7 @@ async def test_model_remembered_while_offline(hass, fake):
     assert entry.state.name == "LOADED" and entry.runtime_data.data is None
     device, = dr.async_entries_for_config_entry(dr.async_get(hass), entry.entry_id)
     assert device.model == "PT-P300BT"
+    assert hass.states.get("button.brother_p_touch_feed_tape") is not None
 
 
 @pytest.mark.parametrize("choice,form,expected", [

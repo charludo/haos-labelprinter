@@ -192,7 +192,7 @@ async def test_print_one_job(hass, ws, fake, design_mod):
     r = await call(ws, "printers")
     p, = r["result"]["printers"]
     assert p["entry_id"] == entry.entry_id and p["tape_mm"] == 12 and p["state"] == "idle"
-    assert p["model"] is None and p["tape_pins"]["12"] == 70
+    assert p["model"] is None and p["tape_pins"]["12"] == 70 and p["has_cutter"] is True
     r = await call(ws, "print", design=text_design(), design_id="x")
     assert not r["success"]
     r = await call(ws, "print")
@@ -331,6 +331,12 @@ async def test_real_renderer_end_to_end(hass, hass_ws_client, fake, monkeypatch)
     assert "error" in r or r["success"]
 
 
+async def test_print_without_auto_cut(hass, ws, fake, design_mod):
+    await setup(hass)
+    r = await call(ws, "print", design=text_design(), auto_cut=False)
+    assert r["success"] and b"\x1biM\x00" in fake.jobs[-1][0]
+
+
 async def test_p300bt_printer_row_and_preview(hass, ws, fake):
     from custom_components.brother_ptouch.ptouch.protocol import MODEL_P300BT
     fake.st = status(model=MODEL_P300BT)
@@ -338,6 +344,13 @@ async def test_p300bt_printer_row_and_preview(hass, ws, fake):
     p, = (await call(ws, "printers"))["result"]["printers"]
     assert p["model"] == "PT-P300BT" and p["tape_pins"] == {"4": 24, "6": 32, "9": 50, "12": 64,
                                                              "18": 112, "24": 128}
+    assert p["has_cutter"] is False
+    r = await call(ws, "print", design=text_design(), chain=True, cut_mark=True)
+    assert r["success"]
+    job, _ = fake.jobs[-1]
+    assert b"\x1biK\x00" in job and b"\x1biM\x40" in job
+    r = await call(ws, "feed", entry_id=entry.entry_id)
+    assert r["success"] and fake.jobs[-1][0].endswith(b"Z\x1a")
     r = await call(ws, "preview", design=text_design())                 # tape from the printer
     assert r["result"]["height"] == 64
     r = await call(ws, "preview", design=text_design(), tape_mm=12, entry_id=entry.entry_id)

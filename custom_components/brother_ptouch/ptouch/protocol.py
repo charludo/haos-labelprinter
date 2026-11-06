@@ -5,7 +5,7 @@ integration and the standalone bridge.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Sequence
 
 from PIL import Image, ImageOps
@@ -256,6 +256,8 @@ class JobOptions:
     compress: bool = True
     orientation: str = "normal"
     model: int | None = None     # status byte 4; None = PT-P7xx geometry
+    chain: bool = False          # no feed at the end: the label stays inside until the next job
+    cut_mark: bool = False       # models without a cutter: a cut mark after each label
 
 
 def mm_to_dots(mm: float) -> int:
@@ -298,8 +300,10 @@ def build_job(images: Sequence[Image.Image], opts: JobOptions) -> bytes:
     # print information: flags(kind|width|recover), type, width, length, lines, page, 0
     out += b"\x1biz" + bytes([0x02 | 0x04 | 0x80, opts.media_type, opts.tape_mm, 0])
     out += len(lines).to_bytes(4, "little") + bytes([0, 0])
-    out += b"\x1biM" + bytes([0x40 if opts.auto_cut and has_cutter(opts.model) else 0x00])
-    out += b"\x1biK\x08"                      # no chain printing: feed and cut at the end
+    # bit 6 cuts; on a model without a cutter it prints a cut mark instead
+    cut = opts.auto_cut if has_cutter(opts.model) else opts.cut_mark
+    out += b"\x1biM" + bytes([0x40 if cut else 0x00])
+    out += b"\x1biK" + (b"\x00" if opts.chain else b"\x08")   # 0x08: no chain printing, feed at the end
     out += b"\x1bid" + margin.to_bytes(2, "little")
     out += b"M" + (b"\x02" if opts.compress else b"\x00")
     for line in lines:
@@ -315,10 +319,10 @@ def build_job(images: Sequence[Image.Image], opts: JobOptions) -> bytes:
 
 
 def build_jobs(images: Sequence[Image.Image], opts: JobOptions) -> list[bytes]:
-    """One job per label with ``cut_each``; otherwise as few strips as fit."""
+    """One job per label with ``cut_each`` or cut marks (a mark ends a job); otherwise as few strips as fit."""
     if not images:
         raise ProtocolError("no images to print")
-    if opts.cut_each:
+    if opts.cut_each or (opts.cut_mark and not has_cutter(opts.model)):
         groups = [[i] for i in images]
     else:
         groups, cur, length = [], [], 0
@@ -331,3 +335,12 @@ def build_jobs(images: Sequence[Image.Image], opts: JobOptions) -> list[bytes]:
             length += extra
         groups.append(cur)
     return [build_job(g, opts) for g in groups]
+
+
+def build_feed_job(opts: JobOptions) -> bytes:
+    """Feed the tape out without printing, e.g. to release a label held by chain printing.
+
+    A bare print command hangs the printer, so this is a page of one blank line.
+    """
+    blank = Image.new("1", (1, tape_pins(opts.tape_mm, opts.model)), 1)
+    return build_job([blank], replace(opts, chain=False, auto_cut=False, cut_mark=False, margin_dots=0))
