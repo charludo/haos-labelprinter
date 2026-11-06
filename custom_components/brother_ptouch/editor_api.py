@@ -219,7 +219,7 @@ def _preview_sync(resolved: dict, tape_mm: int, assets: Any) -> tuple[Any, list[
     mod = _design_module()
     img = mod.render_design(resolved, tape_mm, variables=None, assets=assets)
     try:
-        warnings = list(mod.design_warnings(resolved, tape_mm))
+        warnings = list(mod.design_warnings(resolved, tape_mm, assets=assets))
     except Exception as err:  # noqa: BLE001
         _LOGGER.debug("design_warnings failed: %s", err)
         warnings = []

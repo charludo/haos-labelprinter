@@ -49,7 +49,7 @@ def _fake_design_module():
 
     return types.SimpleNamespace(
         normalize_design=normalize_design, render_design=render_design,
-        design_warnings=lambda d, t: ["fake warning"], DesignError=DesignError, calls=calls)
+        design_warnings=lambda d, t, **kw: ["fake warning"], DesignError=DesignError, calls=calls)
 
 
 class FakeAssets:
@@ -372,3 +372,29 @@ async def test_print_template_service_accepts_builtin_id(hass, fake, monkeypatch
     assert len(fake.jobs) == 1
     with pytest.raises(Exception, match="No label design"):
         await hass.services.async_call(DOMAIN, "print_template", {"template": "no-such-thing"}, blocking=True)
+
+
+async def test_preview_has_no_false_icon_warning(hass, hass_ws_client, fake, monkeypatch):
+    """Regression: warnings must be computed with the asset manager, else every icon reads 'not available'."""
+    import glob
+    pytest.importorskip("custom_components.brother_ptouch.ptouch.design")
+    fonts = glob.glob("/usr/share/fonts/**/DejaVuSans.ttf", recursive=True)
+    if not fonts:
+        pytest.skip("no system TTF to act as an icon font")
+
+    class Assets:
+        def font_path(self, *a, **k): return None
+        def icon_glyph(self, name): return (fonts[0], "\u2605") if name == "mdi:tag" else None
+        def search_fonts(self, *a, **k): return []
+        def search_icons(self, *a, **k): return []
+        def ensure_font(self, *a, **k): return None
+    monkeypatch.setattr(editor_api, "_make_asset_manager", lambda cache: Assets())
+    from homeassistant.setup import async_setup_component
+    assert await async_setup_component(hass, DOMAIN, {})
+    client = await hass_ws_client(hass)
+    ok = {"elements": [{"id": "i", "type": "icon", "icon": "mdi:tag", "x": 0, "y": 0, "w": 60, "h": 60}]}
+    r = await call(client, "preview", design=ok, tape_mm=12)
+    assert r["success"] and not any("not available" in w for w in r["result"]["warnings"]), r["result"]["warnings"]
+    bad = {"elements": [{"id": "i", "type": "icon", "icon": "mdi:does-not-exist", "x": 0, "y": 0, "w": 60, "h": 60}]}
+    r = await call(client, "preview", design=bad, tape_mm=12)
+    assert any("not available" in w for w in r["result"]["warnings"])     # a genuinely missing icon still warns
